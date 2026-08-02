@@ -572,7 +572,7 @@ namespace OpenClawMonitor
 
             if (_processPanel != null)
             {
-                _processPanel.RefreshRows();
+                _processPanel.RefreshLocalRows();
             }
             UpdateFooter(snapshot, null);
         }
@@ -587,6 +587,10 @@ namespace OpenClawMonitor
             _ubuntuPanel.SetMetric(3, "RTT", snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "N/A", ShortError(snapshot.Error), snapshot.Online ? Theme.TextBrush : Theme.RedBrush);
             _ubuntuPanel.AddSample(snapshot.CpuPercent);
             _ubuntuPanel.SetBar(snapshot.CpuPercent);
+            if (_processPanel != null)
+            {
+                _processPanel.SetUbuntuRows(snapshot.Processes, snapshot.Online, ShortError(snapshot.Error));
+            }
             UpdateFooter(null, snapshot);
         }
 
@@ -719,14 +723,62 @@ namespace OpenClawMonitor
 
     public sealed class ProcessPanel : Grid
     {
+        private readonly TextBlock _modeText;
+        private readonly Button _localButton;
+        private readonly Button _ubuntuButton;
         private readonly Grid _table;
         private readonly TextBlock _footer;
+        private readonly Dictionary<int, LocalProcessSample> _localSamples;
+        private List<ProcessRow> _localRows;
+        private List<ProcessRow> _ubuntuRows;
+        private bool _showUbuntu;
+        private bool _ubuntuOnline;
+        private string _ubuntuStatus;
 
         public ProcessPanel()
         {
+            _localSamples = new Dictionary<int, LocalProcessSample>();
+            _localRows = new List<ProcessRow>();
+            _ubuntuRows = new List<ProcessRow>();
+            _ubuntuStatus = "WAIT";
+
             Margin = new Thickness(4);
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var modeBar = new DockPanel();
+            modeBar.Margin = new Thickness(0, 0, 0, 6);
+            _modeText = new TextBlock();
+            _modeText.FontSize = 13;
+            _modeText.FontWeight = FontWeights.Bold;
+            _modeText.Foreground = Theme.YellowBrush;
+            _modeText.VerticalAlignment = VerticalAlignment.Center;
+            _modeText.Text = "proc < local >";
+
+            var buttons = new StackPanel();
+            buttons.Orientation = Orientation.Horizontal;
+            buttons.HorizontalAlignment = HorizontalAlignment.Right;
+            _localButton = UiFactory.TinyButton("local");
+            _localButton.Click += delegate
+            {
+                _showUbuntu = false;
+                Render();
+            };
+            _ubuntuButton = UiFactory.TinyButton("ubuntu");
+            _ubuntuButton.Margin = new Thickness(8, 2, 0, 2);
+            _ubuntuButton.Click += delegate
+            {
+                _showUbuntu = true;
+                Render();
+            };
+            buttons.Children.Add(_localButton);
+            buttons.Children.Add(_ubuntuButton);
+
+            DockPanel.SetDock(buttons, Dock.Right);
+            modeBar.Children.Add(buttons);
+            modeBar.Children.Add(_modeText);
+            Children.Add(modeBar);
 
             _table = new Grid();
             _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
@@ -735,6 +787,7 @@ namespace OpenClawMonitor
             _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
             _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
             _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) });
+            Grid.SetRow(_table, 1);
             Children.Add(_table);
 
             _footer = new TextBlock();
@@ -742,45 +795,74 @@ namespace OpenClawMonitor
             _footer.FontSize = 12;
             _footer.Margin = new Thickness(0, 7, 0, 0);
             _footer.Text = "Press R to refresh";
-            Grid.SetRow(_footer, 1);
+            Grid.SetRow(_footer, 2);
             Children.Add(_footer);
+            Render();
         }
 
-        public void RefreshRows()
+        public void RefreshLocalRows()
+        {
+            _localRows = CaptureLocalRows();
+            if (!_showUbuntu)
+            {
+                Render();
+            }
+        }
+
+        public void SetUbuntuRows(IEnumerable<ProcessRow> rows, bool online, string status)
+        {
+            _ubuntuRows = rows == null ? new List<ProcessRow>() : rows.ToList();
+            _ubuntuOnline = online;
+            _ubuntuStatus = string.IsNullOrWhiteSpace(status) ? (online ? "ONLINE" : "OFFLINE") : status;
+            if (_showUbuntu)
+            {
+                Render();
+            }
+        }
+
+        private void Render()
         {
             _table.Children.Clear();
             _table.RowDefinitions.Clear();
             AddRow(0, "PID", "Process", "User", "CPU%", "MEM", "Status", Theme.MutedBrush, false);
 
-            var rows = new List<Process>();
-            try
+            var rows = _showUbuntu ? _ubuntuRows : _localRows;
+            _modeText.Text = _showUbuntu ? "proc < ubuntu >" : "proc < local >";
+            _localButton.Foreground = _showUbuntu ? Theme.MutedBrush : Theme.GreenBrush;
+            _ubuntuButton.Foreground = _showUbuntu ? Theme.GreenBrush : Theme.MutedBrush;
+
+            if (_showUbuntu && !_ubuntuOnline && rows.Count == 0)
             {
-                rows = Process.GetProcesses()
-                    .OrderByDescending(p => SafeWorkingSet(p))
-                    .ThenBy(p => p.ProcessName)
-                    .Take(14)
-                    .ToList();
+                AddRow(1, "--", "Ubuntu offline", "--", "--", "--", _ubuntuStatus, Theme.RedBrush, true);
+                _footer.Text = "source: Ubuntu LAN (SSH)                                  Total: 0";
+                return;
             }
-            catch
+
+            if (rows.Count == 0)
             {
+                AddRow(1, "--", "No process data", "--", "--", "--", "--", Theme.MutedBrush, true);
+                _footer.Text = "source: " + (_showUbuntu ? "Ubuntu LAN (SSH)" : "Local Windows") + "                                  Total: 0";
+                return;
             }
 
             var row = 1;
-            foreach (var process in rows)
+            foreach (var process in rows.Take(18))
             {
                 AddRow(
                     row,
-                    SafeId(process),
-                    SafeName(process),
-                    "local",
-                    "0.0",
-                    Format.Megabytes(SafeWorkingSet(process)),
-                    SafeStatus(process),
+                    process.Pid,
+                    process.Name,
+                    process.User,
+                    process.CpuPercent.ToString("0.0", CultureInfo.InvariantCulture),
+                    process.MemoryText,
+                    process.Status,
                     row <= 5 ? Theme.GreenBrush : Theme.MutedGreenBrush,
                     true);
                 row++;
             }
-            _footer.Text = "Press R to refresh                                             Total: " + rows.Count.ToString(CultureInfo.InvariantCulture);
+            _footer.Text = "select < local > < ubuntu >                         source: " +
+                (_showUbuntu ? "Ubuntu LAN (SSH)" : "Local Windows") +
+                "   Total: " + rows.Count.ToString(CultureInfo.InvariantCulture);
         }
 
         private void AddRow(int row, string pid, string name, string user, string cpu, string mem, string status, Brush valueBrush, bool dataRow)
@@ -808,22 +890,67 @@ namespace OpenClawMonitor
             _table.Children.Add(block);
         }
 
+        private List<ProcessRow> CaptureLocalRows()
+        {
+            var now = DateTime.UtcNow;
+            var rows = new List<ProcessRow>();
+            var seen = new HashSet<int>();
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    var id = process.Id;
+                    seen.Add(id);
+                    var cpuTime = process.TotalProcessorTime;
+                    var cpuPercent = 0.0;
+                    LocalProcessSample prior;
+                    if (_localSamples.TryGetValue(id, out prior))
+                    {
+                        var elapsed = Math.Max(0.001, (now - prior.TimestampUtc).TotalSeconds);
+                        var cpuDelta = Math.Max(0.0, (cpuTime - prior.CpuTime).TotalSeconds);
+                        cpuPercent = Math.Max(0.0, Math.Min(999.0, cpuDelta / elapsed / Math.Max(1, Environment.ProcessorCount) * 100.0));
+                    }
+                    _localSamples[id] = new LocalProcessSample { TimestampUtc = now, CpuTime = cpuTime };
+
+                    rows.Add(new ProcessRow
+                    {
+                        Pid = id.ToString(CultureInfo.InvariantCulture),
+                        Name = process.ProcessName,
+                        User = "local",
+                        CpuPercent = cpuPercent,
+                        MemoryBytes = SafeWorkingSet(process),
+                        MemoryText = Format.Megabytes(SafeWorkingSet(process)),
+                        Status = SafeStatus(process)
+                    });
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    try { process.Dispose(); }
+                    catch { }
+                }
+            }
+
+            var stale = _localSamples.Keys.Where(id => !seen.Contains(id)).ToList();
+            foreach (var id in stale)
+            {
+                _localSamples.Remove(id);
+            }
+
+            return rows
+                .OrderByDescending(row => row.CpuPercent)
+                .ThenByDescending(row => row.MemoryBytes)
+                .ThenBy(row => row.Name)
+                .Take(30)
+                .ToList();
+        }
+
         private static long SafeWorkingSet(Process process)
         {
             try { return process.WorkingSet64; }
             catch { return 0; }
-        }
-
-        private static string SafeId(Process process)
-        {
-            try { return process.Id.ToString(CultureInfo.InvariantCulture); }
-            catch { return "--"; }
-        }
-
-        private static string SafeName(Process process)
-        {
-            try { return process.ProcessName; }
-            catch { return "--"; }
         }
 
         private static string SafeStatus(Process process)
@@ -836,6 +963,12 @@ namespace OpenClawMonitor
             {
                 return "S";
             }
+        }
+
+        private sealed class LocalProcessSample
+        {
+            public DateTime TimestampUtc { get; set; }
+            public TimeSpan CpuTime { get; set; }
         }
     }
 
@@ -1417,8 +1550,7 @@ namespace OpenClawMonitor
             snapshot.Online = false;
 
             if (string.IsNullOrWhiteSpace(settings.UbuntuHost) ||
-                string.IsNullOrWhiteSpace(settings.UbuntuUser) ||
-                string.IsNullOrWhiteSpace(settings.UbuntuKeyPath))
+                string.IsNullOrWhiteSpace(settings.UbuntuUser))
             {
                 snapshot.Error = "CONFIG";
                 return snapshot;
@@ -1467,35 +1599,7 @@ namespace OpenClawMonitor
                 return snapshot;
             }
 
-            var json = ExtractJson(result.StdOut);
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                snapshot.Error = "NO DATA";
-                return snapshot;
-            }
-
-            try
-            {
-                var root = JsonHelper.Parse(json) as Dictionary<string, object>;
-                if (root == null)
-                {
-                    snapshot.Error = "BAD JSON";
-                    return snapshot;
-                }
-                snapshot.Online = true;
-                snapshot.CpuPercent = JsonHelper.GetDouble(root, "cpu_percent");
-                snapshot.MemoryPercent = JsonHelper.GetDouble(root, "memory_percent");
-                snapshot.MemoryUsedMb = JsonHelper.GetDouble(root, "memory_used_mb");
-                snapshot.MemoryTotalMb = JsonHelper.GetDouble(root, "memory_total_mb");
-                snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
-                snapshot.Error = string.Empty;
-                return snapshot;
-            }
-            catch (Exception ex)
-            {
-                snapshot.Error = ex.Message;
-                return snapshot;
-            }
+            return ParseRemoteJson(result.StdOut, snapshot);
         }
 
         private UbuntuSnapshot ReadWithPassword(MonitorSettings settings, Stopwatch sw, UbuntuSnapshot snapshot)
@@ -1588,6 +1692,7 @@ namespace OpenClawMonitor
                 snapshot.MemoryUsedMb = JsonHelper.GetDouble(root, "memory_used_mb");
                 snapshot.MemoryTotalMb = JsonHelper.GetDouble(root, "memory_total_mb");
                 snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
+                snapshot.Processes = ParseProcessRows(JsonHelper.GetArray(root, "processes"));
                 snapshot.Error = string.Empty;
                 return snapshot;
             }
@@ -1598,9 +1703,47 @@ namespace OpenClawMonitor
             }
         }
 
+        private static List<ProcessRow> ParseProcessRows(object[] rows)
+        {
+            var processes = new List<ProcessRow>();
+            if (rows == null)
+            {
+                return processes;
+            }
+
+            foreach (var item in rows)
+            {
+                var dict = item as Dictionary<string, object>;
+                if (dict == null)
+                {
+                    continue;
+                }
+
+                var memoryKb = JsonHelper.GetDouble(dict, "memory_kb");
+                var bytes = memoryKb.HasValue ? (long)(memoryKb.Value * 1024.0) : 0;
+                processes.Add(new ProcessRow
+                {
+                    Pid = JsonHelper.GetString(dict, "pid") ?? "--",
+                    Name = JsonHelper.GetString(dict, "name") ?? "--",
+                    User = JsonHelper.GetString(dict, "user") ?? "--",
+                    CpuPercent = JsonHelper.GetDouble(dict, "cpu_percent") ?? 0.0,
+                    MemoryBytes = bytes,
+                    MemoryText = Format.Megabytes(bytes),
+                    Status = JsonHelper.GetString(dict, "status") ?? "--"
+                });
+            }
+
+            return processes
+                .OrderByDescending(row => row.CpuPercent)
+                .ThenByDescending(row => row.MemoryBytes)
+                .Take(40)
+                .ToList();
+        }
+
         private const string RemotePython = @"
 import json
 import os
+import subprocess
 import time
 
 def cpu_snapshot():
@@ -1661,12 +1804,46 @@ if energy_path and energy1 is not None:
     except Exception:
         power_watts = None
 
+def read_processes():
+    rows = []
+    try:
+        out = subprocess.check_output(
+            ['ps', '-eo', 'pid,user,comm,pcpu,rss,stat', '--sort=-pcpu'],
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+        for line in out.splitlines()[1:41]:
+            parts = line.split(None, 5)
+            if len(parts) < 6:
+                continue
+            pid, user, name, pcpu, rss, stat = parts
+            try:
+                cpu = float(pcpu)
+            except Exception:
+                cpu = 0.0
+            try:
+                memory_kb = float(rss)
+            except Exception:
+                memory_kb = 0.0
+            rows.append({
+                'pid': pid,
+                'user': user,
+                'name': name,
+                'cpu_percent': cpu,
+                'memory_kb': memory_kb,
+                'status': stat[:1] if stat else ''
+            })
+    except Exception:
+        pass
+    return rows
+
 print(json.dumps({
     'cpu_percent': cpu_percent,
     'memory_percent': memory_percent,
     'memory_used_mb': mem_used / 1024.0,
     'memory_total_mb': mem_total / 1024.0,
-    'power_watts': power_watts
+    'power_watts': power_watts,
+    'processes': read_processes()
 }))
 ";
     }
@@ -2281,6 +2458,23 @@ print(json.dumps({
         public double? MemoryUsedMb { get; set; }
         public double? MemoryTotalMb { get; set; }
         public double? PowerWatts { get; set; }
+        public List<ProcessRow> Processes { get; set; }
+
+        public UbuntuSnapshot()
+        {
+            Processes = new List<ProcessRow>();
+        }
+    }
+
+    public sealed class ProcessRow
+    {
+        public string Pid { get; set; }
+        public string Name { get; set; }
+        public string User { get; set; }
+        public double CpuPercent { get; set; }
+        public long MemoryBytes { get; set; }
+        public string MemoryText { get; set; }
+        public string Status { get; set; }
     }
 
     public sealed class LmStudioSnapshot

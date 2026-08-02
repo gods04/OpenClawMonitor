@@ -10,6 +10,7 @@ It is not a web app. The build output is a double-clickable Windows `.exe`.
 - NVIDIA GPU utilization, temperature, VRAM, and power through `nvidia-smi`
 - CPU package power when Windows exposes a compatible power counter, otherwise `N/A`
 - Ubuntu LAN monitoring over SSH
+- Switchable process table for Local Windows and Ubuntu LAN
 - Simple remote setup: `user@host`, password, and LM Studio local API URL
 - LM Studio monitor using the official local API/CLI direction
 - Manual refresh intervals from `100ms` to `2000ms` in `100ms` steps
