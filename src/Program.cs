@@ -89,6 +89,7 @@ namespace OpenClawMonitor
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
             Content = BuildLayout();
+            ApplyMachineNames();
             UpdateRemoteSummary("ssh --");
             ApplyTimerInterval();
             UpdateRefreshLabels();
@@ -190,7 +191,7 @@ namespace OpenClawMonitor
             top.Children.Add(auxFrame);
 
             _netPanel = new BtopNetPanel();
-            var netFrame = new BtopFrame("3 net   auto zero   <b local n>   <x 小白 n>", Theme.BlueBrush);
+            var netFrame = new BtopFrame("3 net   auto zero   <b local n>   <x remote n>", Theme.BlueBrush);
             netFrame.SetContent(_netPanel);
 
             Grid.SetRow(top, 0);
@@ -220,7 +221,7 @@ namespace OpenClawMonitor
             _footerText = new TextBlock();
             _footerText.FontSize = 12;
             _footerText.Foreground = Theme.MutedBrush;
-            _footerText.Text = "Local Windows  |  CPU --  |  MEM --  |  GPU --  |  Ubuntu LAN (SSH)  |  CPU --  |  MEM --";
+            _footerText.Text = "Local Windows  |  CPU --  |  MEM --  |  GPU --  |  remote  |  CPU --  |  MEM --";
             border.Child = _footerText;
             return border;
         }
@@ -360,8 +361,9 @@ namespace OpenClawMonitor
             return block;
         }
 
-        private void SaveSettingsValues(string remoteTarget, string password, string lmUrl)
+        private void SaveSettingsValues(string remoteName, string remoteTarget, string password, string lmUrl)
         {
+            _settings.RemoteDisplayName = CleanRemoteName(remoteName);
             _settings.UbuntuTarget = (remoteTarget ?? string.Empty).Trim();
             _settings.UbuntuPassword = password ?? string.Empty;
             _settings.ApplyUbuntuTarget();
@@ -373,6 +375,7 @@ namespace OpenClawMonitor
             }
 
             _settingsStore.Save(_settings);
+            ApplyMachineNames();
             _nextUbuntuPollUtc = DateTime.MinValue;
             _nextLmPollUtc = DateTime.MinValue;
             _lmStudioService.ResetLogTailer();
@@ -386,7 +389,7 @@ namespace OpenClawMonitor
             dialog.Owner = this;
             if (dialog.ShowDialog() == true)
             {
-                SaveSettingsValues(dialog.RemoteTarget, dialog.Password, dialog.LmStudioUrl);
+                SaveSettingsValues(dialog.RemoteDisplayName, dialog.RemoteTarget, dialog.Password, dialog.LmStudioUrl);
                 RefreshNow();
             }
         }
@@ -571,6 +574,39 @@ namespace OpenClawMonitor
             _auxPanel.SetLm(snapshot);
         }
 
+        private void ApplyMachineNames()
+        {
+            var remoteName = RemoteName();
+            if (_cpuPanel != null)
+            {
+                _cpuPanel.SetRemoteName(remoteName);
+            }
+            if (_memoryPanel != null)
+            {
+                _memoryPanel.SetRemoteName(remoteName);
+            }
+            if (_netPanel != null)
+            {
+                _netPanel.SetRemoteName(remoteName);
+            }
+            if (_processPanel != null)
+            {
+                _processPanel.SetRemoteName(remoteName);
+            }
+            UpdateFooter(null, null);
+        }
+
+        private string RemoteName()
+        {
+            return CleanRemoteName(_settings == null ? null : _settings.RemoteDisplayName);
+        }
+
+        private static string CleanRemoteName(string value)
+        {
+            var name = (value ?? string.Empty).Trim();
+            return string.IsNullOrWhiteSpace(name) ? "GPU Machine" : name;
+        }
+
         private Brush ProcessingBrush(bool? processing)
         {
             if (!processing.HasValue)
@@ -610,7 +646,7 @@ namespace OpenClawMonitor
             }
 
             var target = string.IsNullOrWhiteSpace(_settings.UbuntuTarget) ? "remote --" : _settings.UbuntuTarget;
-            _remoteSummaryText.Text = state + " " + target;
+            _remoteSummaryText.Text = state + " " + RemoteName() + " " + target;
             _remoteSummaryText.Foreground = state.IndexOf("connected", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.GreenBrush :
                 (state.IndexOf("offline", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.RedBrush : Theme.MutedBrush);
         }
@@ -639,7 +675,7 @@ namespace OpenClawMonitor
                 "Local Windows  |  CPU " + Format.Percent(l == null ? null : l.CpuPercent) +
                 "  |  MEM " + Format.Percent(l == null ? null : l.MemoryPercent) +
                 "  |  GPU " + Format.Percent(l == null ? null : l.GpuUtilizationPercent) +
-                "  |  Ubuntu LAN (SSH)  |  " + (u != null && u.Online ? "ONLINE" : "OFFLINE") +
+                "  |  " + RemoteName() + "  |  " + (u != null && u.Online ? "ONLINE" : "OFFLINE") +
                 "  |  CPU " + Format.Percent(u == null ? null : u.CpuPercent) +
                 "  |  MEM " + Format.Percent(u == null ? null : u.MemoryPercent);
         }
@@ -694,11 +730,14 @@ namespace OpenClawMonitor
         private readonly TextBlock _summaryTitle;
         private readonly TextBlock _summaryCpu;
         private readonly TextBlock _summaryUbuntu;
-        private readonly TextBlock _summaryPower;
+        private readonly TextBlock _summaryCpuPower;
+        private readonly TextBlock _summaryGpuPower;
         private readonly TextBlock _summaryLatency;
+        private string _remoteName;
 
         public BtopCpuPanel()
         {
+            _remoteName = "GPU Machine";
             ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
 
@@ -707,7 +746,7 @@ namespace OpenClawMonitor
             strips.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
             _local = new HostCpuStrip("local windows", Theme.GreenBrush);
-            _ubuntu = new HostCpuStrip("小白 ubuntu", Theme.YellowBrush);
+            _ubuntu = new HostCpuStrip(_remoteName, Theme.YellowBrush);
             Grid.SetRow(_local, 0);
             Grid.SetRow(_ubuntu, 1);
             strips.Children.Add(_local);
@@ -723,13 +762,15 @@ namespace OpenClawMonitor
             var stack = new StackPanel();
             _summaryTitle = SummaryLine("OpenClaw CPU", Theme.TextBrush, 18, true);
             _summaryCpu = SummaryLine("LOCAL  --", Theme.GreenBrush, 16, true);
-            _summaryUbuntu = SummaryLine("小白   --", Theme.YellowBrush, 16, true);
-            _summaryPower = SummaryLine("PWR    --", Theme.TextBrush, 14, false);
+            _summaryUbuntu = SummaryLine(_remoteName + "  --", Theme.YellowBrush, 16, true);
+            _summaryCpuPower = SummaryLine("CPU PWR --", Theme.TextBrush, 14, false);
+            _summaryGpuPower = SummaryLine("GPU PWR --", Theme.TextBrush, 14, false);
             _summaryLatency = SummaryLine("SSH    --", Theme.MutedBrush, 14, false);
             stack.Children.Add(_summaryTitle);
             stack.Children.Add(_summaryCpu);
             stack.Children.Add(_summaryUbuntu);
-            stack.Children.Add(_summaryPower);
+            stack.Children.Add(_summaryCpuPower);
+            stack.Children.Add(_summaryGpuPower);
             stack.Children.Add(_summaryLatency);
             summary.Child = stack;
 
@@ -743,16 +784,24 @@ namespace OpenClawMonitor
         {
             _local.Set(snapshot.CpuPercent, snapshot.LogicalProcessorCount.ToString(CultureInfo.InvariantCulture) + " threads", Format.Watts(snapshot.CpuPackagePowerWatts));
             _summaryCpu.Text = "LOCAL  " + Format.Percent(snapshot.CpuPercent);
-            _summaryPower.Text = "PWR    CPU " + Format.Watts(snapshot.CpuPackagePowerWatts) + "  GPU " + Format.Watts(snapshot.GpuPowerWatts);
+            _summaryCpuPower.Text = "CPU PWR " + Format.Watts(snapshot.CpuPackagePowerWatts);
+            _summaryGpuPower.Text = "GPU PWR " + Format.Watts(snapshot.GpuPowerWatts);
         }
 
         public void SetUbuntu(UbuntuSnapshot snapshot)
         {
             _ubuntu.Set(snapshot.CpuPercent, snapshot.Online ? "online" : "offline", Format.Watts(snapshot.PowerWatts));
-            _summaryUbuntu.Text = "小白   " + Format.Percent(snapshot.CpuPercent);
+            _summaryUbuntu.Text = _remoteName + "  " + Format.Percent(snapshot.CpuPercent);
             _summaryUbuntu.Foreground = snapshot.Online ? Theme.YellowBrush : Theme.RedBrush;
             _summaryLatency.Text = "SSH    " + (snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "offline");
             _summaryLatency.Foreground = snapshot.Online ? Theme.MutedBrush : Theme.RedBrush;
+        }
+
+        public void SetRemoteName(string name)
+        {
+            _remoteName = string.IsNullOrWhiteSpace(name) ? "GPU Machine" : name.Trim();
+            _ubuntu.SetTitle(_remoteName);
+            _summaryUbuntu.Text = _remoteName + "  --";
         }
 
         private static TextBlock SummaryLine(string text, Brush brush, double size, bool bold)
@@ -825,6 +874,11 @@ namespace OpenClawMonitor
             _spark.Add(percent);
             _bar.Value = percent;
         }
+
+        public void SetTitle(string title)
+        {
+            _label.Text = string.IsNullOrWhiteSpace(title) ? "remote" : title.Trim();
+        }
     }
 
     public sealed class BtopMemoryPanel : Grid
@@ -837,7 +891,7 @@ namespace OpenClawMonitor
             RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             _local = new HostMemoryBlock("local", Theme.GreenBrush);
-            _ubuntu = new HostMemoryBlock("小白", Theme.YellowBrush);
+            _ubuntu = new HostMemoryBlock("GPU Machine", Theme.YellowBrush);
             Grid.SetRow(_local, 0);
             Grid.SetRow(_ubuntu, 1);
             Children.Add(_local);
@@ -851,10 +905,18 @@ namespace OpenClawMonitor
 
         public void SetUbuntu(UbuntuSnapshot snapshot)
         {
-            _ubuntu.Set(Format.Number(snapshot.MemoryTotalMb.HasValue ? snapshot.MemoryTotalMb.Value / 1024.0 : (double?)null) + " GiB",
-                Format.Number(snapshot.MemoryUsedMb.HasValue ? snapshot.MemoryUsedMb.Value / 1024.0 : (double?)null) + " GiB",
-                snapshot.Online ? "online" : "offline",
+            var totalGb = snapshot.MemoryTotalMb.HasValue ? snapshot.MemoryTotalMb.Value / 1024.0 : (double?)null;
+            var usedGb = snapshot.MemoryUsedMb.HasValue ? snapshot.MemoryUsedMb.Value / 1024.0 : (double?)null;
+            var availGb = totalGb.HasValue && usedGb.HasValue ? Math.Max(0.0, totalGb.Value - usedGb.Value) : (double?)null;
+            _ubuntu.Set(Format.Number(totalGb) + " GiB",
+                Format.Number(usedGb) + " GiB",
+                Format.Number(availGb) + " GiB",
                 snapshot.MemoryPercent);
+        }
+
+        public void SetRemoteName(string name)
+        {
+            _ubuntu.SetTitle(name);
         }
     }
 
@@ -899,6 +961,11 @@ namespace OpenClawMonitor
             _bar.Value = percent;
         }
 
+        public void SetTitle(string title)
+        {
+            _title.Text = string.IsNullOrWhiteSpace(title) ? "remote" : title.Trim();
+        }
+
         private void Add(UIElement element, int row)
         {
             Grid.SetRow(element, row);
@@ -927,7 +994,7 @@ namespace OpenClawMonitor
             ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             _local = new HostNetBlock("local", Theme.BlueBrush);
-            _ubuntu = new HostNetBlock("小白", Theme.MagentaBrush);
+            _ubuntu = new HostNetBlock("GPU Machine", Theme.MagentaBrush);
             Grid.SetColumn(_local, 0);
             Grid.SetColumn(_ubuntu, 1);
             Children.Add(_local);
@@ -942,6 +1009,11 @@ namespace OpenClawMonitor
         public void SetUbuntu(UbuntuSnapshot snapshot)
         {
             _ubuntu.Set(snapshot.NetworkRxBytesPerSec, snapshot.NetworkTxBytesPerSec, snapshot.NetworkRxTotalBytes, snapshot.NetworkTxTotalBytes, snapshot.Online);
+        }
+
+        public void SetRemoteName(string name)
+        {
+            _ubuntu.SetTitle(name);
         }
     }
 
@@ -984,6 +1056,11 @@ namespace OpenClawMonitor
             _spark.Add(NormalizeRate(rxRate, txRate));
         }
 
+        public void SetTitle(string title)
+        {
+            _title.Text = string.IsNullOrWhiteSpace(title) ? "remote" : title.Trim();
+        }
+
         private static double? NormalizeRate(double? rxRate, double? txRate)
         {
             var value = Math.Max(rxRate ?? 0.0, txRate ?? 0.0);
@@ -1014,47 +1091,65 @@ namespace OpenClawMonitor
 
     public sealed class BtopAuxPanel : Grid
     {
-        private readonly TextBlock _gpu;
-        private readonly TextBlock _gpu2;
-        private readonly TextBlock _lm;
-        private readonly TextBlock _lm2;
-        private readonly TextBlock _lm3;
+        private readonly TextBlock _gpuUtil;
+        private readonly TextBlock _gpuTemp;
+        private readonly TextBlock _gpuVram;
+        private readonly TextBlock _gpuPower;
+        private readonly TextBlock _lmStatus;
+        private readonly TextBlock _lmModel;
+        private readonly TextBlock _lmProcessing;
+        private readonly TextBlock _lmTokens;
 
         public BtopAuxPanel()
         {
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = new GridLength(12) });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            _gpu = Line("GPU --", Theme.BlueBrush, 14, true);
-            _gpu2 = Line("VRAM --  PWR --", Theme.TextBrush, 13, false);
-            _lm = Line("LM Studio --", Theme.MagentaBrush, 14, true);
-            _lm2 = Line("processing --", Theme.TextBrush, 13, false);
-            _lm3 = Line("tok/s --  tokens --", Theme.TextBrush, 13, false);
+            _gpuUtil = Line("GPU UTIL --", Theme.BlueBrush, 12, true);
+            _gpuTemp = Line("GPU TEMP --", Theme.TextBrush, 12, false);
+            _gpuVram = Line("VRAM --", Theme.TextBrush, 12, false);
+            _gpuPower = Line("GPU PWR --", Theme.YellowBrush, 12, false);
+            _lmStatus = Line("LM Studio --", Theme.MagentaBrush, 12, true);
+            _lmModel = Line("MODEL --", Theme.TextBrush, 12, false);
+            _lmProcessing = Line("PROC --", Theme.TextBrush, 12, false);
+            _lmTokens = Line("TOK/S --  TOKENS --", Theme.TextBrush, 12, false);
 
-            Add(_gpu, 0);
-            Add(_gpu2, 1);
-            Add(_lm, 3);
-            Add(_lm2, 4);
-            Add(_lm3, 5);
+            Add(_gpuUtil, 0);
+            Add(_gpuTemp, 1);
+            Add(_gpuVram, 2);
+            Add(_gpuPower, 3);
+            Add(_lmStatus, 5);
+            Add(_lmModel, 6);
+            Add(_lmProcessing, 7);
+            Add(_lmTokens, 8);
         }
 
         public void SetLocal(LocalSnapshot snapshot)
         {
-            _gpu.Text = "GPU " + Format.Percent(snapshot.GpuUtilizationPercent) + "  " + Format.Temperature(snapshot.GpuTemperatureCelsius);
-            _gpu.Foreground = snapshot.GpuAvailable ? Theme.BlueBrush : Theme.MutedBrush;
-            _gpu2.Text = "VRAM " + Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb) + " MB  PWR " + Format.Watts(snapshot.GpuPowerWatts);
+            _gpuUtil.Text = "GPU UTIL " + Format.Percent(snapshot.GpuUtilizationPercent);
+            _gpuUtil.Foreground = snapshot.GpuAvailable ? Theme.BlueBrush : Theme.MutedBrush;
+            _gpuTemp.Text = "GPU TEMP " + Format.Temperature(snapshot.GpuTemperatureCelsius);
+            _gpuVram.Text = "VRAM " + Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb) + " MB";
+            _gpuPower.Text = "GPU PWR " + Format.Watts(snapshot.GpuPowerWatts);
         }
 
         public void SetLm(LmStudioSnapshot snapshot)
         {
-            _lm.Text = "LM Studio " + (snapshot.ServerOnline ? "ONLINE" : "OFFLINE");
-            _lm.Foreground = snapshot.ServerOnline ? Theme.MagentaBrush : Theme.RedBrush;
-            _lm2.Text = "processing " + Format.Processing(snapshot.IsProcessing) + "  model " + (string.IsNullOrWhiteSpace(snapshot.ActiveModel) ? "N/A" : snapshot.ActiveModel);
-            _lm3.Text = "tok/s " + Format.Number(snapshot.TokensPerSecond) + "  tokens " + Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens);
+            var model = string.IsNullOrWhiteSpace(snapshot.ActiveModel) ? "N/A" : snapshot.ActiveModel.Trim();
+            _lmStatus.Text = "LM Studio " + (snapshot.ServerOnline ? "ONLINE" : "OFFLINE");
+            _lmStatus.Foreground = snapshot.ServerOnline ? Theme.MagentaBrush : Theme.RedBrush;
+            _lmModel.Text = "MODEL " + ShortValue(model, 26);
+            _lmModel.ToolTip = model;
+            _lmProcessing.Text = "PROC " + Format.Processing(snapshot.IsProcessing);
+            _lmProcessing.Foreground = ProcessingBrush(snapshot.IsProcessing);
+            _lmTokens.Text = "TOK/S " + Format.Number(snapshot.TokensPerSecond) + "  TOKENS " + Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens);
         }
 
         private void Add(UIElement element, int row)
@@ -1074,6 +1169,29 @@ namespace OpenClawMonitor
             block.TextTrimming = TextTrimming.CharacterEllipsis;
             return block;
         }
+
+        private static Brush ProcessingBrush(bool? processing)
+        {
+            if (!processing.HasValue)
+            {
+                return Theme.MutedBrush;
+            }
+            return processing.Value ? Theme.YellowBrush : Theme.GreenBrush;
+        }
+
+        private static string ShortValue(string value, int max)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "N/A";
+            }
+            value = value.Trim();
+            if (value.Length <= max)
+            {
+                return value;
+            }
+            return value.Substring(0, Math.Max(0, max - 3)) + "...";
+        }
     }
 
     public sealed class ProcessPanel : Grid
@@ -1089,6 +1207,7 @@ namespace OpenClawMonitor
         private bool _showUbuntu;
         private bool _ubuntuOnline;
         private string _ubuntuStatus;
+        private string _remoteName;
 
         public ProcessPanel()
         {
@@ -1096,6 +1215,7 @@ namespace OpenClawMonitor
             _localRows = new List<ProcessRow>();
             _ubuntuRows = new List<ProcessRow>();
             _ubuntuStatus = "WAIT";
+            _remoteName = "GPU Machine";
 
             Margin = new Thickness(4);
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1114,14 +1234,22 @@ namespace OpenClawMonitor
             var buttons = new StackPanel();
             buttons.Orientation = Orientation.Horizontal;
             buttons.HorizontalAlignment = HorizontalAlignment.Right;
-            _localButton = UiFactory.TinyButton("local");
+            _localButton = UiFactory.TextButton("local");
+            _localButton.MinWidth = 72;
+            _localButton.Height = 24;
+            _localButton.Padding = new Thickness(8, 2, 8, 2);
+            _localButton.Margin = new Thickness(6, 2, 0, 2);
             _localButton.Click += delegate
             {
                 _showUbuntu = false;
                 Render();
             };
-            _ubuntuButton = UiFactory.TinyButton("ubuntu");
+            _ubuntuButton = UiFactory.TextButton(RemoteButtonLabel());
+            _ubuntuButton.MinWidth = 96;
+            _ubuntuButton.Height = 24;
+            _ubuntuButton.Padding = new Thickness(8, 2, 8, 2);
             _ubuntuButton.Margin = new Thickness(8, 2, 0, 2);
+            _ubuntuButton.ToolTip = _remoteName;
             _ubuntuButton.Click += delegate
             {
                 _showUbuntu = true;
@@ -1164,6 +1292,14 @@ namespace OpenClawMonitor
             }
         }
 
+        public void SetRemoteName(string name)
+        {
+            _remoteName = string.IsNullOrWhiteSpace(name) ? "GPU Machine" : name.Trim();
+            _ubuntuButton.Content = RemoteButtonLabel();
+            _ubuntuButton.ToolTip = _remoteName;
+            Render();
+        }
+
         public void SetUbuntuRows(IEnumerable<ProcessRow> rows, bool online, string status)
         {
             _ubuntuRows = rows == null ? new List<ProcessRow>() : rows.ToList();
@@ -1182,21 +1318,21 @@ namespace OpenClawMonitor
             AddRow(0, "PID", "Process", "User", "CPU%", "MEM", "Status", Theme.MutedBrush, false);
 
             var rows = _showUbuntu ? _ubuntuRows : _localRows;
-            _modeText.Text = _showUbuntu ? "proc < ubuntu >" : "proc < local >";
+            _modeText.Text = _showUbuntu ? "proc < " + _remoteName + " >" : "proc < local >";
             _localButton.Foreground = _showUbuntu ? Theme.MutedBrush : Theme.GreenBrush;
             _ubuntuButton.Foreground = _showUbuntu ? Theme.GreenBrush : Theme.MutedBrush;
 
             if (_showUbuntu && !_ubuntuOnline && rows.Count == 0)
             {
-                AddRow(1, "--", "Ubuntu offline", "--", "--", "--", _ubuntuStatus, Theme.RedBrush, true);
-                _footer.Text = "source: Ubuntu LAN (SSH)                                  Total: 0";
+                AddRow(1, "--", _remoteName + " offline", "--", "--", "--", _ubuntuStatus, Theme.RedBrush, true);
+                _footer.Text = "source: " + RemoteSourceName() + "                                  Total: 0";
                 return;
             }
 
             if (rows.Count == 0)
             {
                 AddRow(1, "--", "No process data", "--", "--", "--", "--", Theme.MutedBrush, true);
-                _footer.Text = "source: " + (_showUbuntu ? "Ubuntu LAN (SSH)" : "Local Windows") + "                                  Total: 0";
+                _footer.Text = "source: " + (_showUbuntu ? RemoteSourceName() : "Local Windows") + "                                  Total: 0";
                 return;
             }
 
@@ -1215,9 +1351,23 @@ namespace OpenClawMonitor
                     true);
                 row++;
             }
-            _footer.Text = "select < local > < ubuntu >                         source: " +
-                (_showUbuntu ? "Ubuntu LAN (SSH)" : "Local Windows") +
+            _footer.Text = "select < local > < " + RemoteButtonLabel() + " >                         source: " +
+                (_showUbuntu ? RemoteSourceName() : "Local Windows") +
                 "   Total: " + rows.Count.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private string RemoteSourceName()
+        {
+            return _remoteName + " (SSH)";
+        }
+
+        private string RemoteButtonLabel()
+        {
+            if (string.IsNullOrWhiteSpace(_remoteName))
+            {
+                return "remote";
+            }
+            return _remoteName.Length <= 12 ? _remoteName : _remoteName.Substring(0, 9) + "...";
         }
 
         private void AddRow(int row, string pid, string name, string user, string cpu, string mem, string status, Brush valueBrush, bool dataRow)
@@ -1329,10 +1479,12 @@ namespace OpenClawMonitor
 
     public sealed class SettingsWindow : Window
     {
+        private readonly TextBox _nameBox;
         private readonly TextBox _remoteBox;
         private readonly PasswordBox _passwordBox;
         private readonly TextBox _lmBox;
 
+        public string RemoteDisplayName { get; private set; }
         public string RemoteTarget { get; private set; }
         public string Password { get; private set; }
         public string LmStudioUrl { get; private set; }
@@ -1341,9 +1493,9 @@ namespace OpenClawMonitor
         {
             Title = "OpenClaw Monitor Setup";
             Width = 520;
-            Height = 260;
+            Height = 292;
             MinWidth = 460;
-            MinHeight = 230;
+            MinHeight = 260;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.NoResize;
             Background = Theme.Background;
@@ -1357,14 +1509,16 @@ namespace OpenClawMonitor
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            _remoteBox = AddTextRow(grid, 0, "REMOTE", settings.UbuntuTarget);
-            _passwordBox = AddPasswordRow(grid, 1, "PASS", settings.UbuntuPassword);
-            _lmBox = AddTextRow(grid, 2, "LM API", settings.LmStudioBaseUrl);
+            _nameBox = AddTextRow(grid, 0, "NAME", settings.RemoteDisplayName);
+            _remoteBox = AddTextRow(grid, 1, "REMOTE", settings.UbuntuTarget);
+            _passwordBox = AddPasswordRow(grid, 2, "PASS", settings.UbuntuPassword);
+            _lmBox = AddTextRow(grid, 3, "LM API", settings.LmStudioBaseUrl);
 
             var buttons = new StackPanel();
             buttons.Orientation = Orientation.Horizontal;
@@ -1376,7 +1530,7 @@ namespace OpenClawMonitor
             cancel.Margin = new Thickness(8, 0, 0, 0);
             cancel.Click += delegate { DialogResult = false; Close(); };
             buttons.Children.Add(cancel);
-            Grid.SetRow(buttons, 4);
+            Grid.SetRow(buttons, 5);
             Grid.SetColumnSpan(buttons, 2);
             grid.Children.Add(buttons);
 
@@ -1421,6 +1575,7 @@ namespace OpenClawMonitor
 
         private void SaveAndClose()
         {
+            RemoteDisplayName = _nameBox.Text;
             RemoteTarget = _remoteBox.Text;
             Password = _passwordBox.Password;
             LmStudioUrl = _lmBox.Text;
@@ -2732,6 +2887,7 @@ print(json.dumps({
 
     public sealed class MonitorSettings
     {
+        public string RemoteDisplayName { get; set; }
         public string UbuntuTarget { get; set; }
         public string UbuntuHost { get; set; }
         public int UbuntuPort { get; set; }
@@ -2747,6 +2903,7 @@ print(json.dumps({
         {
             return new MonitorSettings
             {
+                RemoteDisplayName = "GPU Machine",
                 UbuntuTarget = "gods@192.168.0.9",
                 UbuntuHost = "192.168.0.9",
                 UbuntuPort = 22,
@@ -2762,6 +2919,7 @@ print(json.dumps({
 
         public MonitorSettings Normalize()
         {
+            RemoteDisplayName = string.IsNullOrWhiteSpace(RemoteDisplayName) ? "GPU Machine" : RemoteDisplayName.Trim();
             UbuntuTarget = UbuntuTarget ?? "";
             UbuntuPassword = UbuntuPassword ?? "";
             if (string.IsNullOrWhiteSpace(UbuntuTarget))
@@ -2848,6 +3006,7 @@ print(json.dumps({
         {
             return new MonitorSettings
             {
+                RemoteDisplayName = RemoteDisplayName,
                 UbuntuTarget = UbuntuTarget,
                 UbuntuHost = UbuntuHost,
                 UbuntuPort = UbuntuPort,
