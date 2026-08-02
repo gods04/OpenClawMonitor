@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -48,16 +49,14 @@ namespace OpenClawMonitor
         private DateTime _nextUbuntuPollUtc = DateTime.MinValue;
         private DateTime _nextLmPollUtc = DateTime.MinValue;
 
-        private MetricPanel _cpuPanel;
-        private MetricPanel _memoryPanel;
-        private MetricPanel _gpuPanel;
-        private MetricPanel _ubuntuPanel;
-        private MetricPanel _lmPanel;
+        private BtopCpuPanel _cpuPanel;
+        private BtopMemoryPanel _memoryPanel;
+        private BtopAuxPanel _auxPanel;
+        private BtopNetPanel _netPanel;
         private ProcessPanel _processPanel;
-        private UniformGrid _localGrid;
-        private UniformGrid _ubuntuGrid;
         private Grid _bottomGrid;
-        private UIElement _ubuntuGroup;
+        private Grid _leftResourceGrid;
+        private UIElement _leftResourceGroup;
         private UIElement _processGroup;
 
         private TextBlock _intervalText;
@@ -131,26 +130,26 @@ namespace OpenClawMonitor
 
             var main = new Grid();
             main.Margin = new Thickness(10, 0, 10, 8);
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.05, GridUnitType.Star) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.95, GridUnitType.Star) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.42, GridUnitType.Star) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.58, GridUnitType.Star) });
 
-            var localGroup = BuildLocalGroup();
+            var cpuGroup = BuildCpuGroup();
             _bottomGrid = new Grid();
             _bottomGrid.Margin = new Thickness(0, 8, 0, 0);
-            _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.48, GridUnitType.Star) });
+            _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.82, GridUnitType.Star) });
             _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
             _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            _ubuntuGroup = BuildUbuntuGroup();
+            _leftResourceGroup = BuildLeftResourceGroup();
             _processGroup = BuildProcessGroup();
-            Grid.SetColumn(_ubuntuGroup, 0);
+            Grid.SetColumn(_leftResourceGroup, 0);
             Grid.SetColumn(_processGroup, 1);
-            _bottomGrid.Children.Add(_ubuntuGroup);
+            _bottomGrid.Children.Add(_leftResourceGroup);
             _bottomGrid.Children.Add(_processGroup);
 
-            Grid.SetRow(localGroup, 0);
+            Grid.SetRow(cpuGroup, 0);
             Grid.SetRow(_bottomGrid, 1);
-            main.Children.Add(localGroup);
+            main.Children.Add(cpuGroup);
             main.Children.Add(_bottomGrid);
 
             root.Children.Add(main);
@@ -159,44 +158,52 @@ namespace OpenClawMonitor
             return root;
         }
 
-        private UIElement BuildLocalGroup()
+        private UIElement BuildCpuGroup()
         {
-            _localGrid = new UniformGrid();
-            _localGrid.Rows = 1;
-            _localGrid.Columns = 3;
-
-            _cpuPanel = new MetricPanel("CPU", Theme.GreenBrush);
-            _memoryPanel = new MetricPanel("Memory", Theme.GreenBrush);
-            _gpuPanel = new MetricPanel("NVIDIA GPU", Theme.GreenBrush);
-            _localGrid.Children.Add(_cpuPanel);
-            _localGrid.Children.Add(_memoryPanel);
-            _localGrid.Children.Add(_gpuPanel);
-
-            var frame = new BtopFrame("Local Windows", Theme.GreenBrush);
-            frame.SetContent(_localGrid);
+            _cpuPanel = new BtopCpuPanel();
+            var frame = new BtopFrame("1 cpu   menu preset *", Theme.GreenBrush);
+            frame.SetContent(_cpuPanel);
             return frame;
         }
 
-        private UIElement BuildUbuntuGroup()
+        private UIElement BuildLeftResourceGroup()
         {
-            _ubuntuGrid = new UniformGrid();
-            _ubuntuGrid.Rows = 1;
-            _ubuntuGrid.Columns = 2;
+            _leftResourceGrid = new Grid();
+            _leftResourceGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.48, GridUnitType.Star) });
+            _leftResourceGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.52, GridUnitType.Star) });
 
-            _ubuntuPanel = new MetricPanel("CPU / Memory", Theme.CyanBrush);
-            _lmPanel = new MetricPanel("LM Studio", Theme.MagentaBrush);
-            _ubuntuGrid.Children.Add(_ubuntuPanel);
-            _ubuntuGrid.Children.Add(_lmPanel);
+            var top = new Grid();
+            top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.48, GridUnitType.Star) });
+            top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.52, GridUnitType.Star) });
 
-            var frame = new BtopFrame("Ubuntu LAN (SSH)", Theme.GreenBrush);
-            frame.SetContent(_ubuntuGrid);
-            return frame;
+            _memoryPanel = new BtopMemoryPanel();
+            var memFrame = new BtopFrame("2 mem", Theme.YellowBrush);
+            memFrame.SetContent(_memoryPanel);
+
+            _auxPanel = new BtopAuxPanel();
+            var auxFrame = new BtopFrame("gpu / lm", Theme.GreenBrush);
+            auxFrame.SetContent(_auxPanel);
+
+            Grid.SetColumn(memFrame, 0);
+            Grid.SetColumn(auxFrame, 1);
+            top.Children.Add(memFrame);
+            top.Children.Add(auxFrame);
+
+            _netPanel = new BtopNetPanel();
+            var netFrame = new BtopFrame("3 net   auto zero   <b local n>   <x 小白 n>", Theme.BlueBrush);
+            netFrame.SetContent(_netPanel);
+
+            Grid.SetRow(top, 0);
+            Grid.SetRow(netFrame, 1);
+            _leftResourceGrid.Children.Add(top);
+            _leftResourceGrid.Children.Add(netFrame);
+            return _leftResourceGrid;
         }
 
         private UIElement BuildProcessGroup()
         {
             _processPanel = new ProcessPanel();
-            var frame = new BtopFrame("Top Processes (All)", Theme.YellowBrush);
+            var frame = new BtopFrame("4 proc   filter        tree < cpu lazy >", Theme.RedMutedBrush);
             frame.SetContent(_processPanel);
             return frame;
         }
@@ -222,29 +229,17 @@ namespace OpenClawMonitor
         {
             var width = ActualWidth > 0 ? ActualWidth : Width;
 
-            if (_localGrid != null)
-            {
-                _localGrid.Columns = width >= 1150 ? 3 : 1;
-                _localGrid.Rows = width >= 1150 ? 1 : 3;
-            }
-
-            if (_ubuntuGrid != null)
-            {
-                _ubuntuGrid.Columns = width >= 760 ? 2 : 1;
-                _ubuntuGrid.Rows = width >= 760 ? 1 : 2;
-            }
-
-            if (_bottomGrid != null && _ubuntuGroup != null && _processGroup != null)
+            if (_bottomGrid != null && _leftResourceGroup != null && _processGroup != null)
             {
                 _bottomGrid.ColumnDefinitions.Clear();
                 _bottomGrid.RowDefinitions.Clear();
                 if (width >= 1150)
                 {
-                    _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.48, GridUnitType.Star) });
+                    _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.82, GridUnitType.Star) });
                     _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
                     _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                    Grid.SetColumn(_ubuntuGroup, 0);
-                    Grid.SetRow(_ubuntuGroup, 0);
+                    Grid.SetColumn(_leftResourceGroup, 0);
+                    Grid.SetRow(_leftResourceGroup, 0);
                     Grid.SetColumn(_processGroup, 1);
                     Grid.SetRow(_processGroup, 0);
                 }
@@ -253,8 +248,8 @@ namespace OpenClawMonitor
                     _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                     _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
                     _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                    Grid.SetColumn(_ubuntuGroup, 0);
-                    Grid.SetRow(_ubuntuGroup, 0);
+                    Grid.SetColumn(_leftResourceGroup, 0);
+                    Grid.SetRow(_leftResourceGroup, 0);
                     Grid.SetColumn(_processGroup, 0);
                     Grid.SetRow(_processGroup, 1);
                 }
@@ -546,29 +541,10 @@ namespace OpenClawMonitor
 
         private void ApplyLocalSnapshot(LocalSnapshot snapshot)
         {
-            _cpuPanel.SetStatus("LOCAL", Theme.CyanBrush);
-            _cpuPanel.SetMetric(0, "USE", Format.Percent(snapshot.CpuPercent), "TOTAL", Theme.PercentBrush(snapshot.CpuPercent));
-            _cpuPanel.SetMetric(1, "CLOCK", "N/A", "GHz", Theme.TextBrush);
-            _cpuPanel.SetMetric(2, "CORES", snapshot.LogicalProcessorCount.ToString(CultureInfo.InvariantCulture), "LOGICAL", Theme.TextBrush);
-            _cpuPanel.SetMetric(3, "PKG W", Format.Watts(snapshot.CpuPackagePowerWatts), "POWER", Theme.ValueBrush);
-            _cpuPanel.AddSample(snapshot.CpuPercent);
-            _cpuPanel.SetBar(snapshot.CpuPercent);
-
-            _memoryPanel.SetStatus("LOCAL", Theme.GreenBrush);
-            _memoryPanel.SetMetric(0, "USE", Format.Percent(snapshot.MemoryPercent), "RAM", Theme.PercentBrush(snapshot.MemoryPercent));
-            _memoryPanel.SetMetric(1, "USED", Format.Gigabytes(snapshot.MemoryUsedBytes), "GB", Theme.TextBrush);
-            _memoryPanel.SetMetric(2, "TOTAL", Format.Gigabytes(snapshot.MemoryTotalBytes), "GB", Theme.TextBrush);
-            _memoryPanel.SetMetric(3, "FREE", Format.Gigabytes(snapshot.MemoryAvailableBytes), "GB", Theme.MutedBrush);
-            _memoryPanel.AddSample(snapshot.MemoryPercent);
-            _memoryPanel.SetBar(snapshot.MemoryPercent);
-
-            _gpuPanel.SetStatus(snapshot.GpuAvailable ? "NVIDIA" : "N/A", snapshot.GpuAvailable ? Theme.MagentaBrush : Theme.MutedBrush);
-            _gpuPanel.SetMetric(0, "USE", Format.Percent(snapshot.GpuUtilizationPercent), "GPU", Theme.PercentBrush(snapshot.GpuUtilizationPercent));
-            _gpuPanel.SetMetric(1, "TEMP", Format.Temperature(snapshot.GpuTemperatureCelsius), "C", Theme.TempBrush(snapshot.GpuTemperatureCelsius));
-            _gpuPanel.SetMetric(2, "VRAM", Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb), "MB", Theme.TextBrush);
-            _gpuPanel.SetMetric(3, "POWER", Format.Watts(snapshot.GpuPowerWatts), "NVIDIA-SMI", Theme.ValueBrush);
-            _gpuPanel.AddSample(snapshot.GpuUtilizationPercent);
-            _gpuPanel.SetBar(snapshot.GpuUtilizationPercent);
+            _cpuPanel.SetLocal(snapshot);
+            _memoryPanel.SetLocal(snapshot);
+            _netPanel.SetLocal(snapshot);
+            _auxPanel.SetLocal(snapshot);
 
             if (_processPanel != null)
             {
@@ -579,14 +555,10 @@ namespace OpenClawMonitor
 
         private void ApplyUbuntuSnapshot(UbuntuSnapshot snapshot)
         {
-            _ubuntuPanel.SetStatus(snapshot.Online ? "ONLINE" : "OFFLINE", snapshot.Online ? Theme.GreenBrush : Theme.RedBrush);
             UpdateRemoteSummary(snapshot.Online ? "ssh connected" : "ssh offline");
-            _ubuntuPanel.SetMetric(0, "CPU", Format.Percent(snapshot.CpuPercent), "REMOTE", Theme.PercentBrush(snapshot.CpuPercent));
-            _ubuntuPanel.SetMetric(1, "MEM", Format.Percent(snapshot.MemoryPercent), Format.MemoryPairMb(snapshot.MemoryUsedMb, snapshot.MemoryTotalMb), Theme.PercentBrush(snapshot.MemoryPercent));
-            _ubuntuPanel.SetMetric(2, "POWER", Format.Watts(snapshot.PowerWatts), "RAPL", Theme.ValueBrush);
-            _ubuntuPanel.SetMetric(3, "RTT", snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "N/A", ShortError(snapshot.Error), snapshot.Online ? Theme.TextBrush : Theme.RedBrush);
-            _ubuntuPanel.AddSample(snapshot.CpuPercent);
-            _ubuntuPanel.SetBar(snapshot.CpuPercent);
+            _cpuPanel.SetUbuntu(snapshot);
+            _memoryPanel.SetUbuntu(snapshot);
+            _netPanel.SetUbuntu(snapshot);
             if (_processPanel != null)
             {
                 _processPanel.SetUbuntuRows(snapshot.Processes, snapshot.Online, ShortError(snapshot.Error));
@@ -596,13 +568,7 @@ namespace OpenClawMonitor
 
         private void ApplyLmStudioSnapshot(LmStudioSnapshot snapshot)
         {
-            _lmPanel.SetStatus(snapshot.ServerOnline ? "ONLINE" : "OFFLINE", snapshot.ServerOnline ? Theme.BlueBrush : Theme.RedBrush);
-            _lmPanel.SetMetric(0, "MODEL", string.IsNullOrEmpty(snapshot.ActiveModel) ? "N/A" : snapshot.ActiveModel, snapshot.LoadedModelCount.ToString(CultureInfo.InvariantCulture) + " LOADED", snapshot.ServerOnline ? Theme.TextBrush : Theme.MutedBrush);
-            _lmPanel.SetMetric(1, "PROC", Format.Processing(snapshot.IsProcessing), snapshot.Source, ProcessingBrush(snapshot.IsProcessing));
-            _lmPanel.SetMetric(2, "TOK/S", Format.Number(snapshot.TokensPerSecond), "LAST", Theme.ValueBrush);
-            _lmPanel.SetMetric(3, "TOKENS", Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens), "IN/OUT", Theme.TextBrush);
-            _lmPanel.AddSample(snapshot.TokensPerSecond);
-            _lmPanel.SetBar(snapshot.TokensPerSecond.HasValue ? Math.Min(100.0, snapshot.TokensPerSecond.Value) : (double?)null);
+            _auxPanel.SetLm(snapshot);
         }
 
         private Brush ProcessingBrush(bool? processing)
@@ -718,6 +684,395 @@ namespace OpenClawMonitor
         public void SetContent(UIElement element)
         {
             _content.Content = element;
+        }
+    }
+
+    public sealed class BtopCpuPanel : Grid
+    {
+        private readonly HostCpuStrip _local;
+        private readonly HostCpuStrip _ubuntu;
+        private readonly TextBlock _summaryTitle;
+        private readonly TextBlock _summaryCpu;
+        private readonly TextBlock _summaryUbuntu;
+        private readonly TextBlock _summaryPower;
+        private readonly TextBlock _summaryLatency;
+
+        public BtopCpuPanel()
+        {
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
+
+            var strips = new Grid();
+            strips.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            strips.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            _local = new HostCpuStrip("local windows", Theme.GreenBrush);
+            _ubuntu = new HostCpuStrip("小白 ubuntu", Theme.YellowBrush);
+            Grid.SetRow(_local, 0);
+            Grid.SetRow(_ubuntu, 1);
+            strips.Children.Add(_local);
+            strips.Children.Add(_ubuntu);
+
+            var summary = new Border();
+            summary.BorderThickness = new Thickness(1);
+            summary.BorderBrush = Theme.DarkBorderBrush;
+            summary.Background = Theme.ChartBackgroundBrush;
+            summary.Padding = new Thickness(10);
+            summary.Margin = new Thickness(10, 28, 0, 28);
+
+            var stack = new StackPanel();
+            _summaryTitle = SummaryLine("OpenClaw CPU", Theme.TextBrush, 18, true);
+            _summaryCpu = SummaryLine("LOCAL  --", Theme.GreenBrush, 16, true);
+            _summaryUbuntu = SummaryLine("小白   --", Theme.YellowBrush, 16, true);
+            _summaryPower = SummaryLine("PWR    --", Theme.TextBrush, 14, false);
+            _summaryLatency = SummaryLine("SSH    --", Theme.MutedBrush, 14, false);
+            stack.Children.Add(_summaryTitle);
+            stack.Children.Add(_summaryCpu);
+            stack.Children.Add(_summaryUbuntu);
+            stack.Children.Add(_summaryPower);
+            stack.Children.Add(_summaryLatency);
+            summary.Child = stack;
+
+            Grid.SetColumn(strips, 0);
+            Grid.SetColumn(summary, 1);
+            Children.Add(strips);
+            Children.Add(summary);
+        }
+
+        public void SetLocal(LocalSnapshot snapshot)
+        {
+            _local.Set(snapshot.CpuPercent, snapshot.LogicalProcessorCount.ToString(CultureInfo.InvariantCulture) + " threads", Format.Watts(snapshot.CpuPackagePowerWatts));
+            _summaryCpu.Text = "LOCAL  " + Format.Percent(snapshot.CpuPercent);
+            _summaryPower.Text = "PWR    CPU " + Format.Watts(snapshot.CpuPackagePowerWatts) + "  GPU " + Format.Watts(snapshot.GpuPowerWatts);
+        }
+
+        public void SetUbuntu(UbuntuSnapshot snapshot)
+        {
+            _ubuntu.Set(snapshot.CpuPercent, snapshot.Online ? "online" : "offline", Format.Watts(snapshot.PowerWatts));
+            _summaryUbuntu.Text = "小白   " + Format.Percent(snapshot.CpuPercent);
+            _summaryUbuntu.Foreground = snapshot.Online ? Theme.YellowBrush : Theme.RedBrush;
+            _summaryLatency.Text = "SSH    " + (snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "offline");
+            _summaryLatency.Foreground = snapshot.Online ? Theme.MutedBrush : Theme.RedBrush;
+        }
+
+        private static TextBlock SummaryLine(string text, Brush brush, double size, bool bold)
+        {
+            var block = new TextBlock();
+            block.Text = text;
+            block.Foreground = brush;
+            block.FontSize = size;
+            block.FontWeight = bold ? FontWeights.Bold : FontWeights.Normal;
+            block.Margin = new Thickness(0, 3, 0, 3);
+            block.TextTrimming = TextTrimming.CharacterEllipsis;
+            return block;
+        }
+    }
+
+    public sealed class HostCpuStrip : Grid
+    {
+        private readonly TextBlock _label;
+        private readonly SparklineCanvas _spark;
+        private readonly SegmentedBar _bar;
+        private readonly TextBlock _value;
+        private readonly TextBlock _sub;
+
+        public HostCpuStrip(string title, Brush accent)
+        {
+            Margin = new Thickness(0, 3, 0, 3);
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+
+            _label = new TextBlock();
+            _label.Text = title;
+            _label.Foreground = accent;
+            _label.FontSize = 14;
+            _label.FontWeight = FontWeights.Bold;
+            _label.VerticalAlignment = VerticalAlignment.Top;
+
+            _spark = new SparklineCanvas(accent);
+            _spark.Margin = new Thickness(6, 0, 8, 0);
+
+            var right = new StackPanel();
+            right.VerticalAlignment = VerticalAlignment.Center;
+            _value = new TextBlock();
+            _value.Foreground = accent;
+            _value.FontWeight = FontWeights.Bold;
+            _value.FontSize = 22;
+            _sub = new TextBlock();
+            _sub.Foreground = Theme.MutedBrush;
+            _sub.FontSize = 12;
+            _bar = new SegmentedBar();
+            _bar.Height = 14;
+            _bar.Margin = new Thickness(0, 5, 0, 3);
+            right.Children.Add(_value);
+            right.Children.Add(_bar);
+            right.Children.Add(_sub);
+
+            Grid.SetColumn(_label, 0);
+            Grid.SetColumn(_spark, 1);
+            Grid.SetColumn(right, 2);
+            Children.Add(_label);
+            Children.Add(_spark);
+            Children.Add(right);
+        }
+
+        public void Set(double? percent, string sub, string power)
+        {
+            _value.Text = Format.Percent(percent);
+            _value.Foreground = Theme.PercentBrush(percent);
+            _sub.Text = sub + "  " + power;
+            _spark.Add(percent);
+            _bar.Value = percent;
+        }
+    }
+
+    public sealed class BtopMemoryPanel : Grid
+    {
+        private readonly HostMemoryBlock _local;
+        private readonly HostMemoryBlock _ubuntu;
+
+        public BtopMemoryPanel()
+        {
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            _local = new HostMemoryBlock("local", Theme.GreenBrush);
+            _ubuntu = new HostMemoryBlock("小白", Theme.YellowBrush);
+            Grid.SetRow(_local, 0);
+            Grid.SetRow(_ubuntu, 1);
+            Children.Add(_local);
+            Children.Add(_ubuntu);
+        }
+
+        public void SetLocal(LocalSnapshot snapshot)
+        {
+            _local.Set(Format.Gigabytes(snapshot.MemoryTotalBytes) + " GiB", Format.Gigabytes(snapshot.MemoryUsedBytes) + " GiB", Format.Gigabytes(snapshot.MemoryAvailableBytes) + " GiB", snapshot.MemoryPercent);
+        }
+
+        public void SetUbuntu(UbuntuSnapshot snapshot)
+        {
+            _ubuntu.Set(Format.Number(snapshot.MemoryTotalMb.HasValue ? snapshot.MemoryTotalMb.Value / 1024.0 : (double?)null) + " GiB",
+                Format.Number(snapshot.MemoryUsedMb.HasValue ? snapshot.MemoryUsedMb.Value / 1024.0 : (double?)null) + " GiB",
+                snapshot.Online ? "online" : "offline",
+                snapshot.MemoryPercent);
+        }
+    }
+
+    public sealed class HostMemoryBlock : Grid
+    {
+        private readonly TextBlock _title;
+        private readonly TextBlock _total;
+        private readonly TextBlock _used;
+        private readonly TextBlock _free;
+        private readonly SegmentedBar _bar;
+
+        public HostMemoryBlock(string title, Brush accent)
+        {
+            Margin = new Thickness(0, 4, 0, 4);
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            _title = Text(title, accent, 13, true);
+            _total = Text("Total: --", Theme.TextBrush, 13, true);
+            _used = Text("Used: --", Theme.TextBrush, 13, false);
+            _free = Text("Avail: --", Theme.TextBrush, 13, false);
+            _bar = new SegmentedBar();
+            _bar.Height = 14;
+            _bar.Margin = new Thickness(0, 4, 0, 0);
+
+            Add(_title, 0);
+            Add(_total, 1);
+            Add(_used, 2);
+            Add(_free, 3);
+            Add(_bar, 4);
+        }
+
+        public void Set(string total, string used, string free, double? percent)
+        {
+            _total.Text = "Total: " + total;
+            _used.Text = "Used:  " + used + "  " + Format.Percent(percent);
+            _used.Foreground = Theme.PercentBrush(percent);
+            _free.Text = "Avail: " + free;
+            _bar.Value = percent;
+        }
+
+        private void Add(UIElement element, int row)
+        {
+            Grid.SetRow(element, row);
+            Children.Add(element);
+        }
+
+        private static TextBlock Text(string value, Brush brush, double size, bool bold)
+        {
+            var block = new TextBlock();
+            block.Text = value;
+            block.Foreground = brush;
+            block.FontSize = size;
+            block.FontWeight = bold ? FontWeights.Bold : FontWeights.Normal;
+            block.TextTrimming = TextTrimming.CharacterEllipsis;
+            return block;
+        }
+    }
+
+    public sealed class BtopNetPanel : Grid
+    {
+        private readonly HostNetBlock _local;
+        private readonly HostNetBlock _ubuntu;
+
+        public BtopNetPanel()
+        {
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _local = new HostNetBlock("local", Theme.BlueBrush);
+            _ubuntu = new HostNetBlock("小白", Theme.MagentaBrush);
+            Grid.SetColumn(_local, 0);
+            Grid.SetColumn(_ubuntu, 1);
+            Children.Add(_local);
+            Children.Add(_ubuntu);
+        }
+
+        public void SetLocal(LocalSnapshot snapshot)
+        {
+            _local.Set(snapshot.NetworkRxBytesPerSec, snapshot.NetworkTxBytesPerSec, snapshot.NetworkRxTotalBytes, snapshot.NetworkTxTotalBytes, true);
+        }
+
+        public void SetUbuntu(UbuntuSnapshot snapshot)
+        {
+            _ubuntu.Set(snapshot.NetworkRxBytesPerSec, snapshot.NetworkTxBytesPerSec, snapshot.NetworkRxTotalBytes, snapshot.NetworkTxTotalBytes, snapshot.Online);
+        }
+    }
+
+    public sealed class HostNetBlock : Grid
+    {
+        private readonly TextBlock _title;
+        private readonly SparklineCanvas _spark;
+        private readonly TextBlock _download;
+        private readonly TextBlock _upload;
+        private readonly TextBlock _total;
+
+        public HostNetBlock(string title, Brush accent)
+        {
+            Margin = new Thickness(4);
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            _title = Text(title, accent, 13, true);
+            _spark = new SparklineCanvas(accent);
+            _spark.MinHeight = 70;
+            _download = Text("down --", Theme.TextBrush, 13, false);
+            _upload = Text("up   --", Theme.TextBrush, 13, false);
+            _total = Text("total --", Theme.MutedBrush, 12, false);
+
+            Add(_title, 0);
+            Add(_spark, 1);
+            Add(_download, 2);
+            Add(_upload, 3);
+            Add(_total, 4);
+        }
+
+        public void Set(double? rxRate, double? txRate, ulong rxTotal, ulong txTotal, bool online)
+        {
+            _download.Text = online ? "down " + Format.BytesPerSecond(rxRate) : "down offline";
+            _upload.Text = online ? "up   " + Format.BytesPerSecond(txRate) : "up   offline";
+            _total.Text = "total " + Format.Bytes(rxTotal + txTotal);
+            _spark.Add(NormalizeRate(rxRate, txRate));
+        }
+
+        private static double? NormalizeRate(double? rxRate, double? txRate)
+        {
+            var value = Math.Max(rxRate ?? 0.0, txRate ?? 0.0);
+            if (value <= 0)
+            {
+                return 0;
+            }
+            return Math.Min(100.0, Math.Log10(value + 1) * 14.0);
+        }
+
+        private void Add(UIElement element, int row)
+        {
+            Grid.SetRow(element, row);
+            Children.Add(element);
+        }
+
+        private static TextBlock Text(string value, Brush brush, double size, bool bold)
+        {
+            var block = new TextBlock();
+            block.Text = value;
+            block.Foreground = brush;
+            block.FontSize = size;
+            block.FontWeight = bold ? FontWeights.Bold : FontWeights.Normal;
+            block.TextTrimming = TextTrimming.CharacterEllipsis;
+            return block;
+        }
+    }
+
+    public sealed class BtopAuxPanel : Grid
+    {
+        private readonly TextBlock _gpu;
+        private readonly TextBlock _gpu2;
+        private readonly TextBlock _lm;
+        private readonly TextBlock _lm2;
+        private readonly TextBlock _lm3;
+
+        public BtopAuxPanel()
+        {
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(12) });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            _gpu = Line("GPU --", Theme.BlueBrush, 14, true);
+            _gpu2 = Line("VRAM --  PWR --", Theme.TextBrush, 13, false);
+            _lm = Line("LM Studio --", Theme.MagentaBrush, 14, true);
+            _lm2 = Line("processing --", Theme.TextBrush, 13, false);
+            _lm3 = Line("tok/s --  tokens --", Theme.TextBrush, 13, false);
+
+            Add(_gpu, 0);
+            Add(_gpu2, 1);
+            Add(_lm, 3);
+            Add(_lm2, 4);
+            Add(_lm3, 5);
+        }
+
+        public void SetLocal(LocalSnapshot snapshot)
+        {
+            _gpu.Text = "GPU " + Format.Percent(snapshot.GpuUtilizationPercent) + "  " + Format.Temperature(snapshot.GpuTemperatureCelsius);
+            _gpu.Foreground = snapshot.GpuAvailable ? Theme.BlueBrush : Theme.MutedBrush;
+            _gpu2.Text = "VRAM " + Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb) + " MB  PWR " + Format.Watts(snapshot.GpuPowerWatts);
+        }
+
+        public void SetLm(LmStudioSnapshot snapshot)
+        {
+            _lm.Text = "LM Studio " + (snapshot.ServerOnline ? "ONLINE" : "OFFLINE");
+            _lm.Foreground = snapshot.ServerOnline ? Theme.MagentaBrush : Theme.RedBrush;
+            _lm2.Text = "processing " + Format.Processing(snapshot.IsProcessing) + "  model " + (string.IsNullOrWhiteSpace(snapshot.ActiveModel) ? "N/A" : snapshot.ActiveModel);
+            _lm3.Text = "tok/s " + Format.Number(snapshot.TokensPerSecond) + "  tokens " + Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens);
+        }
+
+        private void Add(UIElement element, int row)
+        {
+            Grid.SetRow(element, row);
+            Children.Add(element);
+        }
+
+        private static TextBlock Line(string value, Brush brush, double size, bool bold)
+        {
+            var block = new TextBlock();
+            block.Text = value;
+            block.Foreground = brush;
+            block.FontSize = size;
+            block.FontWeight = bold ? FontWeights.Bold : FontWeights.Normal;
+            block.Margin = new Thickness(4, 2, 4, 2);
+            block.TextTrimming = TextTrimming.CharacterEllipsis;
+            return block;
         }
     }
 
@@ -1359,6 +1714,9 @@ namespace OpenClawMonitor
         private readonly PerformanceCounter _cpuCounter;
         private readonly CpuPowerReader _cpuPowerReader;
         private readonly string _nvidiaSmiPath;
+        private DateTime _lastNetworkUtc;
+        private ulong _lastNetworkRxBytes;
+        private ulong _lastNetworkTxBytes;
 
         public LocalMonitorService()
         {
@@ -1396,6 +1754,7 @@ namespace OpenClawMonitor
             snapshot.CpuPackagePowerWatts = _cpuPowerReader.ReadWatts();
             ReadMemory(snapshot);
             ReadGpu(snapshot);
+            ReadNetwork(snapshot);
             return snapshot;
         }
 
@@ -1447,6 +1806,44 @@ namespace OpenClawMonitor
                 snapshot.GpuMemoryUsedMb = ParseNullableDouble(fields[2]);
                 snapshot.GpuMemoryTotalMb = ParseNullableDouble(fields[3]);
                 snapshot.GpuPowerWatts = ParseNullableDouble(fields[4]);
+            }
+        }
+
+        private void ReadNetwork(LocalSnapshot snapshot)
+        {
+            try
+            {
+                ulong rx = 0;
+                ulong tx = 0;
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                        nic.OperationalStatus != OperationalStatus.Up)
+                    {
+                        continue;
+                    }
+                    var stats = nic.GetIPv4Statistics();
+                    rx += stats.BytesReceived < 0 ? 0UL : (ulong)stats.BytesReceived;
+                    tx += stats.BytesSent < 0 ? 0UL : (ulong)stats.BytesSent;
+                }
+
+                var now = DateTime.UtcNow;
+                snapshot.NetworkRxTotalBytes = rx;
+                snapshot.NetworkTxTotalBytes = tx;
+                if (_lastNetworkUtc != default(DateTime))
+                {
+                    var elapsed = Math.Max(0.001, (now - _lastNetworkUtc).TotalSeconds);
+                    snapshot.NetworkRxBytesPerSec = rx >= _lastNetworkRxBytes ? (rx - _lastNetworkRxBytes) / elapsed : 0;
+                    snapshot.NetworkTxBytesPerSec = tx >= _lastNetworkTxBytes ? (tx - _lastNetworkTxBytes) / elapsed : 0;
+                }
+                _lastNetworkUtc = now;
+                _lastNetworkRxBytes = rx;
+                _lastNetworkTxBytes = tx;
+            }
+            catch
+            {
+                snapshot.NetworkRxBytesPerSec = null;
+                snapshot.NetworkTxBytesPerSec = null;
             }
         }
 
@@ -1692,6 +2089,10 @@ namespace OpenClawMonitor
                 snapshot.MemoryUsedMb = JsonHelper.GetDouble(root, "memory_used_mb");
                 snapshot.MemoryTotalMb = JsonHelper.GetDouble(root, "memory_total_mb");
                 snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
+                snapshot.NetworkRxBytesPerSec = JsonHelper.GetDouble(root, "network_rx_bps");
+                snapshot.NetworkTxBytesPerSec = JsonHelper.GetDouble(root, "network_tx_bps");
+                snapshot.NetworkRxTotalBytes = JsonHelper.GetUlong(root, "network_rx_total");
+                snapshot.NetworkTxTotalBytes = JsonHelper.GetUlong(root, "network_tx_total");
                 snapshot.Processes = ParseProcessRows(JsonHelper.GetArray(root, "processes"));
                 snapshot.Error = string.Empty;
                 return snapshot;
@@ -1837,12 +2238,43 @@ def read_processes():
         pass
     return rows
 
+def net_snapshot():
+    rx = 0
+    tx = 0
+    try:
+        with open('/proc/net/dev', 'r') as f:
+            for line in f.readlines()[2:]:
+                if ':' not in line:
+                    continue
+                name, data = line.split(':', 1)
+                name = name.strip()
+                if name == 'lo':
+                    continue
+                parts = data.split()
+                if len(parts) >= 16:
+                    rx += int(parts[0])
+                    tx += int(parts[8])
+    except Exception:
+        pass
+    return rx, tx
+
+net_rx1, net_tx1 = net_snapshot()
+time.sleep(0.10)
+net_rx2, net_tx2 = net_snapshot()
+net_elapsed = 0.10
+net_rx_bps = max(0.0, float(net_rx2 - net_rx1) / net_elapsed)
+net_tx_bps = max(0.0, float(net_tx2 - net_tx1) / net_elapsed)
+
 print(json.dumps({
     'cpu_percent': cpu_percent,
     'memory_percent': memory_percent,
     'memory_used_mb': mem_used / 1024.0,
     'memory_total_mb': mem_total / 1024.0,
     'power_watts': power_watts,
+    'network_rx_bps': net_rx_bps,
+    'network_tx_bps': net_tx_bps,
+    'network_rx_total': net_rx2,
+    'network_tx_total': net_tx2,
     'processes': read_processes()
 }))
 ";
@@ -2446,6 +2878,10 @@ print(json.dumps({
         public double? GpuMemoryUsedMb { get; set; }
         public double? GpuMemoryTotalMb { get; set; }
         public double? GpuPowerWatts { get; set; }
+        public double? NetworkRxBytesPerSec { get; set; }
+        public double? NetworkTxBytesPerSec { get; set; }
+        public ulong NetworkRxTotalBytes { get; set; }
+        public ulong NetworkTxTotalBytes { get; set; }
     }
 
     public sealed class UbuntuSnapshot
@@ -2458,6 +2894,10 @@ print(json.dumps({
         public double? MemoryUsedMb { get; set; }
         public double? MemoryTotalMb { get; set; }
         public double? PowerWatts { get; set; }
+        public double? NetworkRxBytesPerSec { get; set; }
+        public double? NetworkTxBytesPerSec { get; set; }
+        public ulong NetworkRxTotalBytes { get; set; }
+        public ulong NetworkTxTotalBytes { get; set; }
         public List<ProcessRow> Processes { get; set; }
 
         public UbuntuSnapshot()
@@ -2531,6 +2971,16 @@ print(json.dumps({
                 return null;
             }
             return Convert.ToString(dict[key], CultureInfo.InvariantCulture);
+        }
+
+        public static ulong GetUlong(Dictionary<string, object> dict, string key)
+        {
+            var value = GetDouble(dict, key);
+            if (!value.HasValue || value.Value <= 0)
+            {
+                return 0;
+            }
+            return (ulong)value.Value;
         }
 
         public static object[] GetArray(Dictionary<string, object> dict, string key)
@@ -2969,6 +3419,40 @@ print(json.dumps({
             return mb.ToString("0.0", CultureInfo.InvariantCulture) + "M";
         }
 
+        public static string Bytes(ulong bytes)
+        {
+            if (bytes >= 1024UL * 1024UL * 1024UL)
+            {
+                return ((double)bytes / 1024.0 / 1024.0 / 1024.0).ToString("0.00", CultureInfo.InvariantCulture) + " GiB";
+            }
+            if (bytes >= 1024UL * 1024UL)
+            {
+                return ((double)bytes / 1024.0 / 1024.0).ToString("0.0", CultureInfo.InvariantCulture) + " MiB";
+            }
+            if (bytes >= 1024UL)
+            {
+                return ((double)bytes / 1024.0).ToString("0.0", CultureInfo.InvariantCulture) + " KiB";
+            }
+            return bytes.ToString(CultureInfo.InvariantCulture) + " B";
+        }
+
+        public static string BytesPerSecond(double? bytes)
+        {
+            if (!bytes.HasValue)
+            {
+                return "N/A";
+            }
+            if (bytes.Value >= 1024.0 * 1024.0)
+            {
+                return (bytes.Value / 1024.0 / 1024.0).ToString("0.00", CultureInfo.InvariantCulture) + " MiB/s";
+            }
+            if (bytes.Value >= 1024.0)
+            {
+                return (bytes.Value / 1024.0).ToString("0.0", CultureInfo.InvariantCulture) + " KiB/s";
+            }
+            return bytes.Value.ToString("0", CultureInfo.InvariantCulture) + " B/s";
+        }
+
         public static string MemoryPairMb(double? used, double? total)
         {
             if (!used.HasValue || !total.HasValue || total.Value <= 0)
@@ -3018,6 +3502,7 @@ print(json.dumps({
         public static readonly SolidColorBrush MutedGreenBrush = Brush("#76A98A");
         public static readonly SolidColorBrush YellowBrush = Brush("#FACC15");
         public static readonly SolidColorBrush RedBrush = Brush("#FB7185");
+        public static readonly SolidColorBrush RedMutedBrush = Brush("#A66A72");
         public static readonly SolidColorBrush MagentaBrush = Brush("#F472B6");
         public static readonly SolidColorBrush BlueBrush = Brush("#60A5FA");
         public static readonly SolidColorBrush OrangeBrush = Brush("#F97316");

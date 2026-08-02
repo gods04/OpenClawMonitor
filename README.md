@@ -6,11 +6,14 @@ It is not a web app. The build output is a double-clickable Windows `.exe`.
 
 ## Features
 
-- Local Windows CPU and memory monitoring
+- btop-style layout with a full-width CPU panel, left resource stack, and right process table
+- Local Windows CPU, memory, and network monitoring
+- Ubuntu LAN host shown as `小白` for CPU, memory, network, and process data
 - NVIDIA GPU utilization, temperature, VRAM, and power through `nvidia-smi`
 - CPU package power when Windows exposes a compatible power counter, otherwise `N/A`
 - Ubuntu LAN monitoring over SSH
 - Switchable process table for Local Windows and Ubuntu LAN
+- LM Studio status uses compact numeric text instead of graph bars
 - Simple remote setup: `user@host`, password, and LM Studio local API URL
 - LM Studio monitor using the official local API/CLI direction
 - Manual refresh intervals from `100ms` to `2000ms` in `100ms` steps
