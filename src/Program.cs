@@ -839,7 +839,7 @@ namespace OpenClawMonitor
             _label.FontWeight = FontWeights.Bold;
             _label.VerticalAlignment = VerticalAlignment.Top;
 
-            _spark = new SparklineCanvas(accent);
+            _spark = new SparklineCanvas(accent, true);
             _spark.Margin = new Thickness(6, 0, 8, 0);
 
             var right = new StackPanel();
@@ -1741,14 +1741,19 @@ namespace OpenClawMonitor
     {
         private readonly List<double?> _samples;
         private readonly Brush _accentBrush;
-        private readonly Pen _accentPen;
+        private readonly bool _mirrored;
         private const int Capacity = 96;
 
         public SparklineCanvas(Brush accent)
+            : this(accent, false)
+        {
+        }
+
+        public SparklineCanvas(Brush accent, bool mirrored)
         {
             _samples = new List<double?>();
             _accentBrush = accent;
-            _accentPen = new Pen(accent, 1.25);
+            _mirrored = mirrored;
             SnapsToDevicePixels = true;
         }
 
@@ -1795,6 +1800,12 @@ namespace OpenClawMonitor
 
             var step = Math.Max(4.0, w / Math.Max(1, Capacity));
             var dot = Math.Max(1.6, Math.Min(2.2, step - 2.0));
+            if (_mirrored)
+            {
+                DrawMirroredSamples(dc, w, h, step, dot);
+                return;
+            }
+
             var rows = Math.Max(6, (int)Math.Floor(h / 6.0));
             for (int i = 0; i < _samples.Count; i++)
             {
@@ -1812,6 +1823,50 @@ namespace OpenClawMonitor
                     dc.DrawRectangle(_accentBrush, null, new Rect(x, y, dot, dot));
                 }
             }
+        }
+
+        private void DrawMirroredSamples(DrawingContext dc, double w, double h, double step, double dot)
+        {
+            var centerY = h / 2.0;
+            var centerPen = new Pen(Theme.DarkBorderBrush, 1);
+            dc.DrawLine(centerPen, new Point(0, centerY), new Point(w, centerY));
+
+            const double rowGap = 5.0;
+            var halfRows = Math.Max(3, (int)Math.Floor((h / 2.0 - 5.0) / rowGap));
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var sample = _samples[i];
+                if (!sample.HasValue)
+                {
+                    continue;
+                }
+
+                var x = (Capacity - _samples.Count + i) * step;
+                var activeRows = Math.Max(0, (int)Math.Round(sample.Value / 100.0 * halfRows));
+                dc.DrawRectangle(_accentBrush, null, new Rect(x, centerY - dot / 2.0, dot, dot));
+
+                for (int row = 1; row <= activeRows; row++)
+                {
+                    var yOffset = row * rowGap;
+                    var brush = MirrorBrush(sample.Value, row, halfRows);
+                    dc.DrawRectangle(brush, null, new Rect(x, centerY - yOffset - dot / 2.0, dot, dot));
+                    dc.DrawRectangle(brush, null, new Rect(x, centerY + yOffset - dot / 2.0, dot, dot));
+                }
+            }
+        }
+
+        private Brush MirrorBrush(double value, int row, int halfRows)
+        {
+            var rowPosition = (double)row / Math.Max(1, halfRows);
+            if (value >= 90 && rowPosition >= 0.72)
+            {
+                return Theme.RedBrush;
+            }
+            if (value >= 70 && rowPosition >= 0.54)
+            {
+                return Theme.YellowBrush;
+            }
+            return _accentBrush;
         }
 
         private void DrawNoSignal(DrawingContext dc, double w, double h)
