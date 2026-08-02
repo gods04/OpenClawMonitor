@@ -15,7 +15,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Microsoft.Win32;
+using Renci.SshNet;
 
 namespace OpenClawMonitor
 {
@@ -51,19 +51,18 @@ namespace OpenClawMonitor
         private MetricPanel _gpuPanel;
         private MetricPanel _ubuntuPanel;
         private MetricPanel _lmPanel;
+        private UniformGrid _panelGrid;
 
         private TextBlock _intervalText;
         private TextBlock _effectiveText;
         private TextBlock _clockText;
         private TextBlock _statusText;
+        private TextBlock _remoteSummaryText;
         private CheckBox _autoCheckBox;
 
-        private TextBox _ubuntuHostBox;
-        private TextBox _ubuntuPortBox;
-        private TextBox _ubuntuUserBox;
-        private TextBox _ubuntuKeyBox;
+        private TextBox _remoteTargetBox;
+        private PasswordBox _ubuntuPasswordBox;
         private TextBox _lmUrlBox;
-        private TextBox _lmTokenBox;
 
         public MainWindow()
         {
@@ -109,6 +108,7 @@ namespace OpenClawMonitor
             {
                 _lmStudioService.Dispose();
             };
+            SizeChanged += delegate { ApplyResponsiveLayout(); };
         }
 
         private UIElement BuildLayout()
@@ -120,78 +120,72 @@ namespace OpenClawMonitor
             DockPanel.SetDock(topBar, Dock.Top);
             root.Children.Add(topBar);
 
-            var main = new Grid();
-            main.Margin = new Thickness(10, 0, 10, 10);
-            main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.65, GridUnitType.Star) });
-            main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
+            _panelGrid = new UniformGrid();
+            _panelGrid.Margin = new Thickness(10, 0, 10, 10);
 
-            var left = new Grid();
-            left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
-            left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
-            left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
-            left.Margin = new Thickness(0, 0, 6, 0);
-
-            _cpuPanel = new MetricPanel("WINDOWS CPU", Theme.CyanBrush);
-            _memoryPanel = new MetricPanel("WINDOWS MEMORY", Theme.GreenBrush);
-            _gpuPanel = new MetricPanel("NVIDIA GPU", Theme.MagentaBrush);
-            Grid.SetRow(_cpuPanel, 0);
-            Grid.SetRow(_memoryPanel, 1);
-            Grid.SetRow(_gpuPanel, 2);
-            left.Children.Add(_cpuPanel);
-            left.Children.Add(_memoryPanel);
-            left.Children.Add(_gpuPanel);
-
-            var right = new Grid();
-            right.Margin = new Thickness(6, 0, 0, 0);
-            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.05, GridUnitType.Star) });
-            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.05, GridUnitType.Star) });
-            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.95, GridUnitType.Star) });
-
-            _ubuntuPanel = new MetricPanel("UBUNTU LAN", Theme.YellowBrush);
-            _lmPanel = new MetricPanel("LM STUDIO", Theme.BlueBrush);
+            _cpuPanel = new MetricPanel("1 cpu", Theme.GreenBrush);
+            _memoryPanel = new MetricPanel("2 mem", Theme.YellowBrush);
+            _gpuPanel = new MetricPanel("3 gpu", Theme.BlueBrush);
+            _ubuntuPanel = new MetricPanel("4 ubuntu", Theme.CyanBrush);
+            _lmPanel = new MetricPanel("5 lm studio", Theme.MagentaBrush);
             var settingsPanel = BuildSettingsPanel();
-            Grid.SetRow(_ubuntuPanel, 0);
-            Grid.SetRow(_lmPanel, 1);
-            Grid.SetRow(settingsPanel, 2);
-            right.Children.Add(_ubuntuPanel);
-            right.Children.Add(_lmPanel);
-            right.Children.Add(settingsPanel);
 
-            Grid.SetColumn(left, 0);
-            Grid.SetColumn(right, 1);
-            main.Children.Add(left);
-            main.Children.Add(right);
-            root.Children.Add(main);
+            _panelGrid.Children.Add(_cpuPanel);
+            _panelGrid.Children.Add(_memoryPanel);
+            _panelGrid.Children.Add(_gpuPanel);
+            _panelGrid.Children.Add(_ubuntuPanel);
+            _panelGrid.Children.Add(_lmPanel);
+            _panelGrid.Children.Add(settingsPanel);
+
+            root.Children.Add(_panelGrid);
+            ApplyResponsiveLayout();
 
             return root;
         }
 
+        private void ApplyResponsiveLayout()
+        {
+            if (_panelGrid == null)
+            {
+                return;
+            }
+
+            var width = ActualWidth > 0 ? ActualWidth : Width;
+            var columns = width >= 1280 ? 3 : (width >= 940 ? 2 : 1);
+            _panelGrid.Columns = columns;
+            _panelGrid.Rows = (int)Math.Ceiling((double)_panelGrid.Children.Count / columns);
+        }
+
         private UIElement BuildTopBar()
         {
-            var bar = new Grid();
-            bar.Height = 50;
-            bar.Margin = new Thickness(10, 8, 10, 6);
-            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var shell = new Border();
+            shell.Height = 46;
+            shell.Margin = new Thickness(10, 8, 10, 6);
+            shell.Padding = new Thickness(10, 0, 10, 0);
+            shell.BorderBrush = Theme.DarkBorderBrush;
+            shell.BorderThickness = new Thickness(1);
+            shell.Background = Theme.HeaderBrush;
 
-            var titleStack = new StackPanel();
-            titleStack.Orientation = Orientation.Vertical;
-            titleStack.VerticalAlignment = VerticalAlignment.Center;
+            var bar = new DockPanel();
+            shell.Child = bar;
 
-            var title = new TextBlock();
-            title.Text = "OPENCLAW MONITOR";
-            title.FontSize = 18;
-            title.FontWeight = FontWeights.Bold;
-            title.Foreground = Theme.TextBrush;
-            titleStack.Children.Add(title);
+            var left = new StackPanel();
+            left.Orientation = Orientation.Horizontal;
+            left.VerticalAlignment = VerticalAlignment.Center;
+
+            left.Children.Add(TopToken("openclaw", Theme.TextBrush, true));
+            left.Children.Add(TopToken("local", Theme.GreenBrush, false));
+            _remoteSummaryText = TopToken("ssh --", Theme.MutedBrush, false);
+            left.Children.Add(_remoteSummaryText);
 
             _statusText = new TextBlock();
             _statusText.Text = "BOOT";
-            _statusText.FontSize = 11;
+            _statusText.FontSize = 13;
+            _statusText.FontWeight = FontWeights.Bold;
             _statusText.Foreground = Theme.MutedBrush;
-            titleStack.Children.Add(_statusText);
+            _statusText.Margin = new Thickness(14, 0, 0, 0);
+            _statusText.VerticalAlignment = VerticalAlignment.Center;
+            left.Children.Add(_statusText);
 
             var center = new StackPanel();
             center.Orientation = Orientation.Horizontal;
@@ -241,22 +235,33 @@ namespace OpenClawMonitor
             _autoCheckBox.Unchecked += delegate { SetAutoMode(false); };
             controls.Children.Add(_autoCheckBox);
 
-            Grid.SetColumn(titleStack, 0);
-            Grid.SetColumn(center, 1);
-            Grid.SetColumn(controls, 2);
-            bar.Children.Add(titleStack);
-            bar.Children.Add(center);
+            DockPanel.SetDock(left, Dock.Left);
+            DockPanel.SetDock(controls, Dock.Right);
+            bar.Children.Add(left);
             bar.Children.Add(controls);
-            return bar;
+            bar.Children.Add(center);
+            return shell;
+        }
+
+        private TextBlock TopToken(string text, Brush brush, bool strong)
+        {
+            var block = new TextBlock();
+            block.Text = text;
+            block.FontSize = 14;
+            block.FontWeight = strong ? FontWeights.Bold : FontWeights.Normal;
+            block.Foreground = brush;
+            block.Margin = new Thickness(0, 0, 18, 0);
+            block.VerticalAlignment = VerticalAlignment.Center;
+            return block;
         }
 
         private UIElement BuildSettingsPanel()
         {
             var panel = new Border();
-            panel.Margin = new Thickness(0, 6, 0, 0);
+            panel.Margin = new Thickness(4);
             panel.Padding = new Thickness(10);
             panel.BorderThickness = new Thickness(1);
-            panel.BorderBrush = Theme.BorderBrush;
+            panel.BorderBrush = Theme.CyanBrush;
             panel.Background = Theme.PanelBrush;
             panel.SnapsToDevicePixels = true;
 
@@ -265,51 +270,37 @@ namespace OpenClawMonitor
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var title = new TextBlock();
-            title.Text = "SSH / API CONFIG";
+            title.Text = "6 setup";
             title.FontSize = 13;
             title.FontWeight = FontWeights.Bold;
-            title.Foreground = Theme.YellowBrush;
+            title.Foreground = Theme.CyanBrush;
             title.Margin = new Thickness(0, 0, 0, 8);
             Grid.SetRow(title, 0);
-            Grid.SetColumnSpan(title, 3);
+            Grid.SetColumnSpan(title, 2);
             grid.Children.Add(title);
 
-            _ubuntuHostBox = AddSettingRow(grid, 1, "HOST");
-            _ubuntuPortBox = AddSettingRow(grid, 2, "PORT");
-            _ubuntuUserBox = AddSettingRow(grid, 3, "USER");
-            _ubuntuKeyBox = AddSettingRow(grid, 4, "KEY");
-
-            var browse = UiFactory.TinyButton("...");
-            browse.Click += delegate { BrowseKeyFile(); };
-            Grid.SetRow(browse, 4);
-            Grid.SetColumn(browse, 2);
-            grid.Children.Add(browse);
-
-            _lmUrlBox = AddSettingRow(grid, 5, "LM API");
-            _lmTokenBox = AddSettingRow(grid, 6, "TOKEN");
+            _remoteTargetBox = AddSettingRow(grid, 1, "REMOTE");
+            _ubuntuPasswordBox = AddPasswordRow(grid, 2, "PASS");
+            _lmUrlBox = AddSettingRow(grid, 3, "LM API");
 
             var actions = new StackPanel();
             actions.Orientation = Orientation.Horizontal;
             actions.HorizontalAlignment = HorizontalAlignment.Right;
             actions.Margin = new Thickness(0, 8, 0, 0);
-            var save = UiFactory.TextButton("SAVE");
+            var save = UiFactory.TextButton("save");
             save.Click += delegate { SaveSettingsFromUi(); };
             actions.Children.Add(save);
-            var ping = UiFactory.TextButton("TEST");
+            var ping = UiFactory.TextButton("test");
             ping.Margin = new Thickness(8, 0, 0, 0);
             ping.Click += delegate { ForceRemotePoll(); };
             actions.Children.Add(ping);
-            Grid.SetRow(actions, 7);
-            Grid.SetColumnSpan(actions, 3);
+            Grid.SetRow(actions, 4);
+            Grid.SetColumnSpan(actions, 2);
             grid.Children.Add(actions);
 
             panel.Child = grid;
@@ -335,53 +326,40 @@ namespace OpenClawMonitor
             return box;
         }
 
-        private void PopulateSettingsFields()
+        private PasswordBox AddPasswordRow(Grid grid, int row, string labelText)
         {
-            _ubuntuHostBox.Text = _settings.UbuntuHost;
-            _ubuntuPortBox.Text = _settings.UbuntuPort.ToString(CultureInfo.InvariantCulture);
-            _ubuntuUserBox.Text = _settings.UbuntuUser;
-            _ubuntuKeyBox.Text = _settings.UbuntuKeyPath;
-            _lmUrlBox.Text = _settings.LmStudioBaseUrl;
-            _lmTokenBox.Text = _settings.LmStudioApiToken;
+            var label = new TextBlock();
+            label.Text = labelText;
+            label.FontSize = 11;
+            label.Foreground = Theme.MutedBrush;
+            label.VerticalAlignment = VerticalAlignment.Center;
+            label.Margin = new Thickness(0, 3, 6, 3);
+            Grid.SetRow(label, row);
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+
+            var box = UiFactory.SecretInputBox();
+            Grid.SetRow(box, row);
+            Grid.SetColumn(box, 1);
+            grid.Children.Add(box);
+            return box;
         }
 
-        private void BrowseKeyFile()
+        private void PopulateSettingsFields()
         {
-            var dialog = new OpenFileDialog();
-            dialog.Title = "Select SSH key";
-            dialog.CheckFileExists = true;
-            dialog.Filter = "SSH keys|id_*;*.pem;*.key;*.*";
-            if (!string.IsNullOrWhiteSpace(_ubuntuKeyBox.Text))
-            {
-                var dir = Path.GetDirectoryName(Environment.ExpandEnvironmentVariables(_ubuntuKeyBox.Text));
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                {
-                    dialog.InitialDirectory = dir;
-                }
-            }
-            if (dialog.ShowDialog(this) == true)
-            {
-                _ubuntuKeyBox.Text = dialog.FileName;
-            }
+            _remoteTargetBox.Text = _settings.UbuntuTarget;
+            _ubuntuPasswordBox.Password = _settings.UbuntuPassword;
+            _lmUrlBox.Text = _settings.LmStudioBaseUrl;
+            UpdateRemoteSummary("ssh --");
         }
 
         private void SaveSettingsFromUi()
         {
-            int port;
-            _settings.UbuntuHost = (_ubuntuHostBox.Text ?? string.Empty).Trim();
-            _settings.UbuntuUser = (_ubuntuUserBox.Text ?? string.Empty).Trim();
-            _settings.UbuntuKeyPath = (_ubuntuKeyBox.Text ?? string.Empty).Trim();
-            if (int.TryParse((_ubuntuPortBox.Text ?? string.Empty).Trim(), out port) && port > 0 && port < 65536)
-            {
-                _settings.UbuntuPort = port;
-            }
-            else
-            {
-                _ubuntuPortBox.Text = _settings.UbuntuPort.ToString(CultureInfo.InvariantCulture);
-            }
+            _settings.UbuntuTarget = (_remoteTargetBox.Text ?? string.Empty).Trim();
+            _settings.UbuntuPassword = _ubuntuPasswordBox.Password ?? string.Empty;
+            _settings.ApplyUbuntuTarget();
 
             _settings.LmStudioBaseUrl = (_lmUrlBox.Text ?? string.Empty).Trim();
-            _settings.LmStudioApiToken = (_lmTokenBox.Text ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(_settings.LmStudioBaseUrl))
             {
                 _settings.LmStudioBaseUrl = "http://localhost:1234";
@@ -392,6 +370,7 @@ namespace OpenClawMonitor
             _nextUbuntuPollUtc = DateTime.MinValue;
             _nextLmPollUtc = DateTime.MinValue;
             _lmStudioService.ResetLogTailer();
+            UpdateRemoteSummary("ssh saved");
             SetStatus("CONFIG SAVED");
         }
 
@@ -582,6 +561,7 @@ namespace OpenClawMonitor
         private void ApplyUbuntuSnapshot(UbuntuSnapshot snapshot)
         {
             _ubuntuPanel.SetStatus(snapshot.Online ? "ONLINE" : "OFFLINE", snapshot.Online ? Theme.GreenBrush : Theme.RedBrush);
+            UpdateRemoteSummary(snapshot.Online ? "ssh connected" : "ssh offline");
             _ubuntuPanel.SetMetric(0, "CPU", Format.Percent(snapshot.CpuPercent), "REMOTE", Theme.PercentBrush(snapshot.CpuPercent));
             _ubuntuPanel.SetMetric(1, "MEM", Format.Percent(snapshot.MemoryPercent), Format.MemoryPairMb(snapshot.MemoryUsedMb, snapshot.MemoryTotalMb), Theme.PercentBrush(snapshot.MemoryPercent));
             _ubuntuPanel.SetMetric(2, "POWER", Format.Watts(snapshot.PowerWatts), "RAPL", Theme.ValueBrush);
@@ -631,6 +611,19 @@ namespace OpenClawMonitor
                 _statusText.Text = text;
             }
         }
+
+        private void UpdateRemoteSummary(string state)
+        {
+            if (_remoteSummaryText == null)
+            {
+                return;
+            }
+
+            var target = string.IsNullOrWhiteSpace(_settings.UbuntuTarget) ? "remote --" : _settings.UbuntuTarget;
+            _remoteSummaryText.Text = state + " " + target;
+            _remoteSummaryText.Foreground = state.IndexOf("connected", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.GreenBrush :
+                (state.IndexOf("offline", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.RedBrush : Theme.MutedBrush);
+        }
     }
 
     public sealed class MetricPanel : Border
@@ -643,12 +636,13 @@ namespace OpenClawMonitor
         public MetricPanel(string title, Brush accent)
         {
             _cells = new List<MetricCell>();
-            Margin = new Thickness(0, 0, 0, 6);
-            Padding = new Thickness(10);
+            Margin = new Thickness(4);
+            Padding = new Thickness(8);
             BorderThickness = new Thickness(1);
-            BorderBrush = Theme.BorderBrush;
+            BorderBrush = accent;
             Background = Theme.PanelBrush;
             SnapsToDevicePixels = true;
+            MinHeight = 210;
 
             var grid = new Grid();
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -693,7 +687,7 @@ namespace OpenClawMonitor
             }
 
             _sparkline = new SparklineCanvas(accent);
-            _sparkline.MinHeight = 56;
+            _sparkline.MinHeight = 68;
             _sparkline.Margin = new Thickness(0, 0, 0, 8);
 
             _bar = new SegmentedBar();
@@ -745,11 +739,10 @@ namespace OpenClawMonitor
 
         public MetricCell()
         {
-            BorderThickness = new Thickness(1);
-            BorderBrush = Theme.DarkBorderBrush;
-            Background = Theme.InnerPanelBrush;
-            Padding = new Thickness(6, 5, 6, 5);
-            MinHeight = 58;
+            BorderThickness = new Thickness(0);
+            Background = Brushes.Transparent;
+            Padding = new Thickness(4, 3, 4, 3);
+            MinHeight = 50;
 
             var stack = new StackPanel();
             stack.Orientation = Orientation.Vertical;
@@ -761,7 +754,7 @@ namespace OpenClawMonitor
             stack.Children.Add(_label);
 
             _value = new TextBlock();
-            _value.FontSize = 18;
+            _value.FontSize = 17;
             _value.FontWeight = FontWeights.Bold;
             _value.Foreground = Theme.TextBrush;
             _value.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -842,40 +835,25 @@ namespace OpenClawMonitor
                 return;
             }
 
-            var step = w / Math.Max(1, Capacity - 1);
-            var geometry = new StreamGeometry();
-            using (var ctx = geometry.Open())
+            var step = Math.Max(4.0, w / Math.Max(1, Capacity));
+            var dot = Math.Max(1.6, Math.Min(2.2, step - 2.0));
+            var rows = Math.Max(6, (int)Math.Floor(h / 6.0));
+            for (int i = 0; i < _samples.Count; i++)
             {
-                bool started = false;
-                for (int i = 0; i < _samples.Count; i++)
+                var sample = _samples[i];
+                if (!sample.HasValue)
                 {
-                    var sample = _samples[i];
-                    if (!sample.HasValue)
-                    {
-                        started = false;
-                        continue;
-                    }
+                    continue;
+                }
 
-                    var x = (Capacity - _samples.Count + i) * step;
-                    var y = h - (sample.Value / 100.0 * (h - 6.0)) - 3.0;
-                    if (!started)
-                    {
-                        ctx.BeginFigure(new Point(x, y), false, false);
-                        started = true;
-                    }
-                    else
-                    {
-                        ctx.LineTo(new Point(x, y), true, false);
-                    }
+                var x = (Capacity - _samples.Count + i) * step;
+                var activeRows = Math.Max(1, (int)Math.Round(sample.Value / 100.0 * rows));
+                for (int row = 0; row < activeRows; row++)
+                {
+                    var y = h - 4 - row * 5.0;
+                    dc.DrawRectangle(_accentBrush, null, new Rect(x, y, dot, dot));
                 }
             }
-            geometry.Freeze();
-            dc.DrawGeometry(null, _accentPen, geometry);
-
-            var latest = last[last.Count - 1].Value;
-            var latestX = (Capacity - 1) * step;
-            var latestY = h - (latest / 100.0 * (h - 6.0)) - 3.0;
-            dc.DrawRectangle(_accentBrush, null, new Rect(Math.Max(0, latestX - 2), latestY - 2, 4, 4));
         }
 
         private void DrawNoSignal(DrawingContext dc, double w, double h)
@@ -1131,10 +1109,15 @@ namespace OpenClawMonitor
                 return snapshot;
             }
 
+            if (!string.IsNullOrWhiteSpace(settings.UbuntuPassword))
+            {
+                return ReadWithPassword(settings, sw, snapshot);
+            }
+
             var keyPath = Environment.ExpandEnvironmentVariables(settings.UbuntuKeyPath);
             if (!File.Exists(keyPath))
             {
-                snapshot.Error = "KEY MISSING";
+                snapshot.Error = "PASS OR KEY";
                 return snapshot;
             }
 
@@ -1200,6 +1183,38 @@ namespace OpenClawMonitor
             }
         }
 
+        private UbuntuSnapshot ReadWithPassword(MonitorSettings settings, Stopwatch sw, UbuntuSnapshot snapshot)
+        {
+            try
+            {
+                using (var client = new SshClient(settings.UbuntuHost, settings.UbuntuPort, settings.UbuntuUser, settings.UbuntuPassword))
+                {
+                    client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(4);
+                    client.Connect();
+                    using (var command = client.CreateCommand("python3 - <<'PY'\n" + RemotePython + "\nPY"))
+                    {
+                        command.CommandTimeout = TimeSpan.FromSeconds(7);
+                        var output = command.Execute();
+                        sw.Stop();
+                        snapshot.LatencyMs = sw.Elapsed.TotalMilliseconds;
+                        if (command.ExitStatus != 0)
+                        {
+                            snapshot.Error = FirstUsefulLine(command.Error, output, "REMOTE ERR");
+                            return snapshot;
+                        }
+                        return ParseRemoteJson(output, snapshot);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                snapshot.LatencyMs = sw.Elapsed.TotalMilliseconds;
+                snapshot.Error = ex.Message;
+                return snapshot;
+            }
+        }
+
         private static string ExtractJson(string output)
         {
             if (string.IsNullOrWhiteSpace(output))
@@ -1233,6 +1248,39 @@ namespace OpenClawMonitor
                 }
             }
             return "OFFLINE";
+        }
+
+        private static UbuntuSnapshot ParseRemoteJson(string output, UbuntuSnapshot snapshot)
+        {
+            var json = ExtractJson(output);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                snapshot.Error = "NO DATA";
+                return snapshot;
+            }
+
+            try
+            {
+                var root = JsonHelper.Parse(json) as Dictionary<string, object>;
+                if (root == null)
+                {
+                    snapshot.Error = "BAD JSON";
+                    return snapshot;
+                }
+                snapshot.Online = true;
+                snapshot.CpuPercent = JsonHelper.GetDouble(root, "cpu_percent");
+                snapshot.MemoryPercent = JsonHelper.GetDouble(root, "memory_percent");
+                snapshot.MemoryUsedMb = JsonHelper.GetDouble(root, "memory_used_mb");
+                snapshot.MemoryTotalMb = JsonHelper.GetDouble(root, "memory_total_mb");
+                snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
+                snapshot.Error = string.Empty;
+                return snapshot;
+            }
+            catch (Exception ex)
+            {
+                snapshot.Error = ex.Message;
+                return snapshot;
+            }
         }
 
         private const string RemotePython = @"
@@ -1760,9 +1808,11 @@ print(json.dumps({
 
     public sealed class MonitorSettings
     {
+        public string UbuntuTarget { get; set; }
         public string UbuntuHost { get; set; }
         public int UbuntuPort { get; set; }
         public string UbuntuUser { get; set; }
+        public string UbuntuPassword { get; set; }
         public string UbuntuKeyPath { get; set; }
         public int RefreshMs { get; set; }
         public bool AutoMode { get; set; }
@@ -1773,9 +1823,11 @@ print(json.dumps({
         {
             return new MonitorSettings
             {
-                UbuntuHost = "",
+                UbuntuTarget = "gods@192.168.0.9",
+                UbuntuHost = "192.168.0.9",
                 UbuntuPort = 22,
-                UbuntuUser = "",
+                UbuntuUser = "gods",
+                UbuntuPassword = "",
                 UbuntuKeyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519"),
                 RefreshMs = 1000,
                 AutoMode = true,
@@ -1786,6 +1838,20 @@ print(json.dumps({
 
         public MonitorSettings Normalize()
         {
+            UbuntuTarget = UbuntuTarget ?? "";
+            UbuntuPassword = UbuntuPassword ?? "";
+            if (string.IsNullOrWhiteSpace(UbuntuTarget))
+            {
+                if (!string.IsNullOrWhiteSpace(UbuntuUser) && !string.IsNullOrWhiteSpace(UbuntuHost))
+                {
+                    UbuntuTarget = UbuntuUser + "@" + UbuntuHost + (UbuntuPort != 22 ? ":" + UbuntuPort.ToString(CultureInfo.InvariantCulture) : "");
+                }
+                else
+                {
+                    UbuntuTarget = "gods@192.168.0.9";
+                }
+            }
+            ApplyUbuntuTarget();
             if (UbuntuPort <= 0 || UbuntuPort >= 65536)
             {
                 UbuntuPort = 22;
@@ -1805,13 +1871,56 @@ print(json.dumps({
             return this;
         }
 
+        public void ApplyUbuntuTarget()
+        {
+            var target = (UbuntuTarget ?? "").Trim();
+            if (target.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+            {
+                target = target.Substring("ssh://".Length);
+            }
+            target = target.TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return;
+            }
+
+            var user = UbuntuUser;
+            var hostPort = target;
+            var at = target.IndexOf('@');
+            if (at >= 0)
+            {
+                user = target.Substring(0, at).Trim();
+                hostPort = target.Substring(at + 1).Trim();
+            }
+
+            var port = UbuntuPort;
+            var host = hostPort;
+            var colon = hostPort.LastIndexOf(':');
+            if (colon > 0 && colon < hostPort.Length - 1 && hostPort.IndexOf(']') < 0)
+            {
+                int parsedPort;
+                if (int.TryParse(hostPort.Substring(colon + 1), out parsedPort) && parsedPort > 0 && parsedPort < 65536)
+                {
+                    port = parsedPort;
+                    host = hostPort.Substring(0, colon);
+                }
+            }
+
+            UbuntuTarget = target;
+            UbuntuUser = string.IsNullOrWhiteSpace(user) ? "gods" : user;
+            UbuntuHost = string.IsNullOrWhiteSpace(host) ? "192.168.0.9" : host;
+            UbuntuPort = port <= 0 ? 22 : port;
+        }
+
         public MonitorSettings Clone()
         {
             return new MonitorSettings
             {
+                UbuntuTarget = UbuntuTarget,
                 UbuntuHost = UbuntuHost,
                 UbuntuPort = UbuntuPort,
                 UbuntuUser = UbuntuUser,
+                UbuntuPassword = UbuntuPassword,
                 UbuntuKeyPath = UbuntuKeyPath,
                 RefreshMs = RefreshMs,
                 AutoMode = AutoMode,
@@ -2286,6 +2395,21 @@ print(json.dumps({
             box.MinHeight = 24;
             return box;
         }
+
+        public static PasswordBox SecretInputBox()
+        {
+            var box = new PasswordBox();
+            box.FontFamily = Theme.MonoFont;
+            box.FontSize = 12;
+            box.Foreground = Theme.TextBrush;
+            box.Background = Theme.ChartBackgroundBrush;
+            box.BorderBrush = Theme.DarkBorderBrush;
+            box.BorderThickness = new Thickness(1);
+            box.Padding = new Thickness(5, 2, 5, 2);
+            box.Margin = new Thickness(0, 2, 0, 2);
+            box.MinHeight = 24;
+            return box;
+        }
     }
 
     public static class Format
@@ -2347,6 +2471,7 @@ print(json.dumps({
     {
         public static readonly FontFamily MonoFont = new FontFamily("Cascadia Mono, Consolas, Lucida Console");
         public static readonly SolidColorBrush Background = Brush("#000000");
+        public static readonly SolidColorBrush HeaderBrush = Brush("#020303");
         public static readonly SolidColorBrush PanelBrush = Brush("#050607");
         public static readonly SolidColorBrush InnerPanelBrush = Brush("#071012");
         public static readonly SolidColorBrush ChartBackgroundBrush = Brush("#020404");

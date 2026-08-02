@@ -1,14 +1,30 @@
 # OpenClaw Monitor
 
-Native Windows WPF monitor with a black btop-style interface.
+OpenClaw Monitor is a native Windows WPF desktop monitor with a black, compact, btop-inspired interface.
+
+It is not a web app. The build output is a double-clickable Windows `.exe`.
+
+## Features
+
+- Local Windows CPU and memory monitoring
+- NVIDIA GPU utilization, temperature, VRAM, and power through `nvidia-smi`
+- CPU package power when Windows exposes a compatible power counter, otherwise `N/A`
+- Ubuntu LAN monitoring over SSH
+- Simple remote setup: `user@host`, password, and LM Studio local API URL
+- LM Studio monitor using the official local API/CLI direction
+- Manual refresh intervals: `500ms`, `1000ms`, `2000ms`, `5000ms`, `10000ms`
+- Auto mode that slows polling when the remote host is offline or the window is in the background
+- Responsive panel grid that adjusts between one, two, and three columns
 
 ## Build
 
-This workspace currently builds with the Windows .NET Framework compiler:
+On this machine the project builds with the Windows .NET Framework compiler, so a full .NET SDK is not required.
 
 ```powershell
 .\build.ps1
 ```
+
+The script downloads SSH.NET from NuGet when needed for password-based SSH.
 
 Output:
 
@@ -16,22 +32,40 @@ Output:
 bin\OpenClawMonitor.exe
 ```
 
-## Runtime notes
+## Configure
 
-- Windows CPU and memory are read locally.
-- NVIDIA metrics use `nvidia-smi` when available.
-- CPU package power is shown only if Windows exposes a compatible Power Meter performance counter; otherwise it stays `N/A`.
-- Ubuntu LAN monitoring uses `ssh.exe` with the configured key path and runs a short Python probe over stdin.
-- LM Studio monitoring targets official LM Studio local APIs and CLI:
-  - REST server default: `http://localhost:1234`
-  - Models: `/api/v1/models`, with `/api/v0/models` fallback
-  - Token stats: `lms log stream --source model --filter output --json --stats`
-  - Processing hint: `lms ps --json` when available
+The setup panel intentionally keeps the MVP simple:
 
-Official docs checked:
+- `REMOTE`: for example `gods@192.168.0.9`
+- `PASS`: the Ubuntu user's SSH password
+- `LM API`: for example `http://localhost:1234` or another LAN URL
+
+No LM Studio token is required by default. If your LM Studio server later enables API token authentication, token support can be brought back as an advanced setting.
+
+Local app settings are stored under:
+
+```text
+%APPDATA%\OpenClawMonitor\settings.json
+```
+
+Do not commit real passwords, SSH keys, or local config files.
+
+## LM Studio Notes
+
+Official docs checked while implementing this monitor:
 
 - https://lmstudio.ai/docs/developer/core/server
 - https://lmstudio.ai/docs/developer/rest/list
 - https://lmstudio.ai/docs/developer/rest/chat
 - https://lmstudio.ai/docs/cli/local-models/ps
 - https://lmstudio.ai/docs/cli/serve/log-stream
+
+The app currently uses:
+
+- `/api/v1/models` with `/api/v0/models` fallback for loaded model state
+- `lms ps --json` as a best-effort processing hint
+- `lms log stream --source model --filter output --json --stats` for token/sec and token usage stats when available
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

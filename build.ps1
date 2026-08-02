@@ -14,6 +14,8 @@ if (-not (Test-Path $csc)) {
 }
 
 $framework = Split-Path -Parent $csc
+$packages = Join-Path $root "packages"
+New-Item -ItemType Directory -Force $packages | Out-Null
 
 function Find-Assembly([string]$name) {
     $frameworkCandidate = Join-Path $framework $name
@@ -53,6 +55,31 @@ $refs = @(
     "System.Management.dll"
 ) | ForEach-Object { Find-Assembly $_ }
 
+function Ensure-SshNet {
+    $version = "2020.0.2"
+    $packageRoot = Join-Path $packages "SSH.NET.$version"
+    $dll = Join-Path $packageRoot "lib\net40\Renci.SshNet.dll"
+    if (Test-Path $dll) {
+        return $dll
+    }
+
+    $nupkg = Join-Path $packages "SSH.NET.$version.nupkg"
+    $zip = Join-Path $packages "SSH.NET.$version.zip"
+    if (-not (Test-Path $nupkg)) {
+        Write-Host "Downloading SSH.NET $version..."
+        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/SSH.NET/$version" -OutFile $nupkg
+    }
+    Copy-Item -LiteralPath $nupkg -Destination $zip -Force
+    Expand-Archive -Path $zip -DestinationPath $packageRoot -Force
+    if (-not (Test-Path $dll)) {
+        throw "SSH.NET package downloaded but net40 DLL was not found."
+    }
+    return $dll
+}
+
+$sshNet = Ensure-SshNet
+$refs += $sshNet
+
 $sources = Get-ChildItem -Path $src -Filter *.cs -File | ForEach-Object { $_.FullName }
 if (-not $sources) {
     throw "No C# sources found in $src"
@@ -75,4 +102,5 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Copy-Item -LiteralPath $sshNet -Destination (Join-Path $bin "Renci.SshNet.dll") -Force
 Write-Host "Built $out"
