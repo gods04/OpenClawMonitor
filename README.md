@@ -12,7 +12,7 @@ It is not a web app. The build output is a double-clickable Windows `.exe`.
 - Ubuntu LAN monitoring over SSH
 - Simple remote setup: `user@host`, password, and LM Studio local API URL
 - LM Studio monitor using the official local API/CLI direction
-- Manual refresh intervals: `500ms`, `1000ms`, `2000ms`, `5000ms`, `10000ms`
+- Manual refresh intervals from `100ms` to `2000ms` in `100ms` steps
 - Auto mode that slows polling when the remote host is offline or the window is in the background
 - Responsive panel grid that adjusts between one, two, and three columns
 
@@ -34,7 +34,7 @@ bin\OpenClawMonitor.exe
 
 ## Configure
 
-The setup panel intentionally keeps the MVP simple:
+The setup dialog intentionally keeps the MVP simple and stays hidden from the main monitor view:
 
 - `REMOTE`: for example `gods@192.168.0.9`
 - `PASS`: the Ubuntu user's SSH password

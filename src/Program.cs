@@ -32,7 +32,9 @@ namespace OpenClawMonitor
 
     public sealed class MainWindow : Window
     {
-        private readonly int[] _refreshSteps = new[] { 500, 1000, 2000, 5000, 10000 };
+        private const int MinRefreshMs = 100;
+        private const int MaxRefreshMs = 2000;
+        private const int RefreshStepMs = 100;
         private readonly SettingsStore _settingsStore;
         private readonly LocalMonitorService _localService;
         private readonly UbuntuMonitorService _ubuntuService;
@@ -51,23 +53,26 @@ namespace OpenClawMonitor
         private MetricPanel _gpuPanel;
         private MetricPanel _ubuntuPanel;
         private MetricPanel _lmPanel;
-        private UniformGrid _panelGrid;
+        private ProcessPanel _processPanel;
+        private UniformGrid _localGrid;
+        private UniformGrid _ubuntuGrid;
+        private Grid _bottomGrid;
+        private UIElement _ubuntuGroup;
+        private UIElement _processGroup;
 
         private TextBlock _intervalText;
         private TextBlock _effectiveText;
         private TextBlock _clockText;
         private TextBlock _statusText;
         private TextBlock _remoteSummaryText;
+        private TextBlock _footerText;
         private CheckBox _autoCheckBox;
-
-        private TextBox _remoteTargetBox;
-        private PasswordBox _ubuntuPasswordBox;
-        private TextBox _lmUrlBox;
 
         public MainWindow()
         {
             _settingsStore = new SettingsStore();
             _settings = _settingsStore.Load();
+            _settingsStore.Save(_settings);
             _localService = new LocalMonitorService();
             _ubuntuService = new UbuntuMonitorService();
             _lmStudioService = new LmStudioService();
@@ -85,7 +90,7 @@ namespace OpenClawMonitor
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
             Content = BuildLayout();
-            PopulateSettingsFields();
+            UpdateRemoteSummary("ssh --");
             ApplyTimerInterval();
             UpdateRefreshLabels();
 
@@ -120,40 +125,140 @@ namespace OpenClawMonitor
             DockPanel.SetDock(topBar, Dock.Top);
             root.Children.Add(topBar);
 
-            _panelGrid = new UniformGrid();
-            _panelGrid.Margin = new Thickness(10, 0, 10, 10);
+            var footer = BuildFooter();
+            DockPanel.SetDock(footer, Dock.Bottom);
+            root.Children.Add(footer);
 
-            _cpuPanel = new MetricPanel("1 cpu", Theme.GreenBrush);
-            _memoryPanel = new MetricPanel("2 mem", Theme.YellowBrush);
-            _gpuPanel = new MetricPanel("3 gpu", Theme.BlueBrush);
-            _ubuntuPanel = new MetricPanel("4 ubuntu", Theme.CyanBrush);
-            _lmPanel = new MetricPanel("5 lm studio", Theme.MagentaBrush);
-            var settingsPanel = BuildSettingsPanel();
+            var main = new Grid();
+            main.Margin = new Thickness(10, 0, 10, 8);
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.05, GridUnitType.Star) });
+            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.95, GridUnitType.Star) });
 
-            _panelGrid.Children.Add(_cpuPanel);
-            _panelGrid.Children.Add(_memoryPanel);
-            _panelGrid.Children.Add(_gpuPanel);
-            _panelGrid.Children.Add(_ubuntuPanel);
-            _panelGrid.Children.Add(_lmPanel);
-            _panelGrid.Children.Add(settingsPanel);
+            var localGroup = BuildLocalGroup();
+            _bottomGrid = new Grid();
+            _bottomGrid.Margin = new Thickness(0, 8, 0, 0);
+            _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.48, GridUnitType.Star) });
+            _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            root.Children.Add(_panelGrid);
+            _ubuntuGroup = BuildUbuntuGroup();
+            _processGroup = BuildProcessGroup();
+            Grid.SetColumn(_ubuntuGroup, 0);
+            Grid.SetColumn(_processGroup, 1);
+            _bottomGrid.Children.Add(_ubuntuGroup);
+            _bottomGrid.Children.Add(_processGroup);
+
+            Grid.SetRow(localGroup, 0);
+            Grid.SetRow(_bottomGrid, 1);
+            main.Children.Add(localGroup);
+            main.Children.Add(_bottomGrid);
+
+            root.Children.Add(main);
             ApplyResponsiveLayout();
 
             return root;
         }
 
+        private UIElement BuildLocalGroup()
+        {
+            _localGrid = new UniformGrid();
+            _localGrid.Rows = 1;
+            _localGrid.Columns = 3;
+
+            _cpuPanel = new MetricPanel("CPU", Theme.GreenBrush);
+            _memoryPanel = new MetricPanel("Memory", Theme.GreenBrush);
+            _gpuPanel = new MetricPanel("NVIDIA GPU", Theme.GreenBrush);
+            _localGrid.Children.Add(_cpuPanel);
+            _localGrid.Children.Add(_memoryPanel);
+            _localGrid.Children.Add(_gpuPanel);
+
+            var frame = new BtopFrame("Local Windows", Theme.GreenBrush);
+            frame.SetContent(_localGrid);
+            return frame;
+        }
+
+        private UIElement BuildUbuntuGroup()
+        {
+            _ubuntuGrid = new UniformGrid();
+            _ubuntuGrid.Rows = 1;
+            _ubuntuGrid.Columns = 2;
+
+            _ubuntuPanel = new MetricPanel("CPU / Memory", Theme.CyanBrush);
+            _lmPanel = new MetricPanel("LM Studio", Theme.MagentaBrush);
+            _ubuntuGrid.Children.Add(_ubuntuPanel);
+            _ubuntuGrid.Children.Add(_lmPanel);
+
+            var frame = new BtopFrame("Ubuntu LAN (SSH)", Theme.GreenBrush);
+            frame.SetContent(_ubuntuGrid);
+            return frame;
+        }
+
+        private UIElement BuildProcessGroup()
+        {
+            _processPanel = new ProcessPanel();
+            var frame = new BtopFrame("Top Processes (All)", Theme.YellowBrush);
+            frame.SetContent(_processPanel);
+            return frame;
+        }
+
+        private UIElement BuildFooter()
+        {
+            var border = new Border();
+            border.Margin = new Thickness(10, 0, 10, 8);
+            border.Padding = new Thickness(14, 7, 14, 7);
+            border.BorderThickness = new Thickness(1);
+            border.BorderBrush = Theme.DarkBorderBrush;
+            border.Background = Theme.ChartBackgroundBrush;
+
+            _footerText = new TextBlock();
+            _footerText.FontSize = 12;
+            _footerText.Foreground = Theme.MutedBrush;
+            _footerText.Text = "Local Windows  |  CPU --  |  MEM --  |  GPU --  |  Ubuntu LAN (SSH)  |  CPU --  |  MEM --";
+            border.Child = _footerText;
+            return border;
+        }
+
         private void ApplyResponsiveLayout()
         {
-            if (_panelGrid == null)
+            var width = ActualWidth > 0 ? ActualWidth : Width;
+
+            if (_localGrid != null)
             {
-                return;
+                _localGrid.Columns = width >= 1150 ? 3 : 1;
+                _localGrid.Rows = width >= 1150 ? 1 : 3;
             }
 
-            var width = ActualWidth > 0 ? ActualWidth : Width;
-            var columns = width >= 1280 ? 3 : (width >= 940 ? 2 : 1);
-            _panelGrid.Columns = columns;
-            _panelGrid.Rows = (int)Math.Ceiling((double)_panelGrid.Children.Count / columns);
+            if (_ubuntuGrid != null)
+            {
+                _ubuntuGrid.Columns = width >= 760 ? 2 : 1;
+                _ubuntuGrid.Rows = width >= 760 ? 1 : 2;
+            }
+
+            if (_bottomGrid != null && _ubuntuGroup != null && _processGroup != null)
+            {
+                _bottomGrid.ColumnDefinitions.Clear();
+                _bottomGrid.RowDefinitions.Clear();
+                if (width >= 1150)
+                {
+                    _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.48, GridUnitType.Star) });
+                    _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+                    _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                    Grid.SetColumn(_ubuntuGroup, 0);
+                    Grid.SetRow(_ubuntuGroup, 0);
+                    Grid.SetColumn(_processGroup, 1);
+                    Grid.SetRow(_processGroup, 0);
+                }
+                else
+                {
+                    _bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                    _bottomGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                    Grid.SetColumn(_ubuntuGroup, 0);
+                    Grid.SetRow(_ubuntuGroup, 0);
+                    Grid.SetColumn(_processGroup, 0);
+                    Grid.SetRow(_processGroup, 1);
+                }
+            }
         }
 
         private UIElement BuildTopBar()
@@ -235,6 +340,11 @@ namespace OpenClawMonitor
             _autoCheckBox.Unchecked += delegate { SetAutoMode(false); };
             controls.Children.Add(_autoCheckBox);
 
+            var settings = UiFactory.TextButton("settings");
+            settings.Margin = new Thickness(12, 0, 0, 0);
+            settings.Click += delegate { ShowSettingsDialog(); };
+            controls.Children.Add(settings);
+
             DockPanel.SetDock(left, Dock.Left);
             DockPanel.SetDock(controls, Dock.Right);
             bar.Children.Add(left);
@@ -255,115 +365,16 @@ namespace OpenClawMonitor
             return block;
         }
 
-        private UIElement BuildSettingsPanel()
+        private void SaveSettingsValues(string remoteTarget, string password, string lmUrl)
         {
-            var panel = new Border();
-            panel.Margin = new Thickness(4);
-            panel.Padding = new Thickness(10);
-            panel.BorderThickness = new Thickness(1);
-            panel.BorderBrush = Theme.CyanBrush;
-            panel.Background = Theme.PanelBrush;
-            panel.SnapsToDevicePixels = true;
-
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var title = new TextBlock();
-            title.Text = "6 setup";
-            title.FontSize = 13;
-            title.FontWeight = FontWeights.Bold;
-            title.Foreground = Theme.CyanBrush;
-            title.Margin = new Thickness(0, 0, 0, 8);
-            Grid.SetRow(title, 0);
-            Grid.SetColumnSpan(title, 2);
-            grid.Children.Add(title);
-
-            _remoteTargetBox = AddSettingRow(grid, 1, "REMOTE");
-            _ubuntuPasswordBox = AddPasswordRow(grid, 2, "PASS");
-            _lmUrlBox = AddSettingRow(grid, 3, "LM API");
-
-            var actions = new StackPanel();
-            actions.Orientation = Orientation.Horizontal;
-            actions.HorizontalAlignment = HorizontalAlignment.Right;
-            actions.Margin = new Thickness(0, 8, 0, 0);
-            var save = UiFactory.TextButton("save");
-            save.Click += delegate { SaveSettingsFromUi(); };
-            actions.Children.Add(save);
-            var ping = UiFactory.TextButton("test");
-            ping.Margin = new Thickness(8, 0, 0, 0);
-            ping.Click += delegate { ForceRemotePoll(); };
-            actions.Children.Add(ping);
-            Grid.SetRow(actions, 4);
-            Grid.SetColumnSpan(actions, 2);
-            grid.Children.Add(actions);
-
-            panel.Child = grid;
-            return panel;
-        }
-
-        private TextBox AddSettingRow(Grid grid, int row, string labelText)
-        {
-            var label = new TextBlock();
-            label.Text = labelText;
-            label.FontSize = 11;
-            label.Foreground = Theme.MutedBrush;
-            label.VerticalAlignment = VerticalAlignment.Center;
-            label.Margin = new Thickness(0, 3, 6, 3);
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            grid.Children.Add(label);
-
-            var box = UiFactory.InputBox();
-            Grid.SetRow(box, row);
-            Grid.SetColumn(box, 1);
-            grid.Children.Add(box);
-            return box;
-        }
-
-        private PasswordBox AddPasswordRow(Grid grid, int row, string labelText)
-        {
-            var label = new TextBlock();
-            label.Text = labelText;
-            label.FontSize = 11;
-            label.Foreground = Theme.MutedBrush;
-            label.VerticalAlignment = VerticalAlignment.Center;
-            label.Margin = new Thickness(0, 3, 6, 3);
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            grid.Children.Add(label);
-
-            var box = UiFactory.SecretInputBox();
-            Grid.SetRow(box, row);
-            Grid.SetColumn(box, 1);
-            grid.Children.Add(box);
-            return box;
-        }
-
-        private void PopulateSettingsFields()
-        {
-            _remoteTargetBox.Text = _settings.UbuntuTarget;
-            _ubuntuPasswordBox.Password = _settings.UbuntuPassword;
-            _lmUrlBox.Text = _settings.LmStudioBaseUrl;
-            UpdateRemoteSummary("ssh --");
-        }
-
-        private void SaveSettingsFromUi()
-        {
-            _settings.UbuntuTarget = (_remoteTargetBox.Text ?? string.Empty).Trim();
-            _settings.UbuntuPassword = _ubuntuPasswordBox.Password ?? string.Empty;
+            _settings.UbuntuTarget = (remoteTarget ?? string.Empty).Trim();
+            _settings.UbuntuPassword = password ?? string.Empty;
             _settings.ApplyUbuntuTarget();
 
-            _settings.LmStudioBaseUrl = (_lmUrlBox.Text ?? string.Empty).Trim();
+            _settings.LmStudioBaseUrl = (lmUrl ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(_settings.LmStudioBaseUrl))
             {
                 _settings.LmStudioBaseUrl = "http://localhost:1234";
-                _lmUrlBox.Text = _settings.LmStudioBaseUrl;
             }
 
             _settingsStore.Save(_settings);
@@ -374,19 +385,22 @@ namespace OpenClawMonitor
             SetStatus("CONFIG SAVED");
         }
 
+        private void ShowSettingsDialog()
+        {
+            var dialog = new SettingsWindow(_settings);
+            dialog.Owner = this;
+            if (dialog.ShowDialog() == true)
+            {
+                SaveSettingsValues(dialog.RemoteTarget, dialog.Password, dialog.LmStudioUrl);
+                RefreshNow();
+            }
+        }
+
         private void ChangeRefreshStep(int delta)
         {
-            var index = 0;
-            for (int i = 0; i < _refreshSteps.Length; i++)
-            {
-                if (_refreshSteps[i] == _settings.RefreshMs)
-                {
-                    index = i;
-                    break;
-                }
-            }
-            index = Math.Max(0, Math.Min(_refreshSteps.Length - 1, index + delta));
-            _settings.RefreshMs = _refreshSteps[index];
+            var next = _settings.RefreshMs + delta * RefreshStepMs;
+            next = Math.Max(MinRefreshMs, Math.Min(MaxRefreshMs, next));
+            _settings.RefreshMs = next;
             _settingsStore.Save(_settings);
             ApplyTimerInterval();
             UpdateRefreshLabels();
@@ -424,11 +438,11 @@ namespace OpenClawMonitor
         {
             if (!_settings.AutoMode)
             {
-                return _lastUbuntuOnline ? _settings.RefreshMs : Math.Max(5000, _settings.RefreshMs);
+                return _lastUbuntuOnline ? _settings.RefreshMs : Math.Max(2000, _settings.RefreshMs);
             }
             if (!_isWindowActive || !_lastUbuntuOnline)
             {
-                return Math.Max(10000, _settings.RefreshMs * 5);
+                return Math.Max(2000, _settings.RefreshMs * 5);
             }
             return _settings.RefreshMs;
         }
@@ -437,13 +451,13 @@ namespace OpenClawMonitor
         {
             if (!_settings.AutoMode)
             {
-                return Math.Max(1000, _settings.RefreshMs);
+                return Math.Max(500, _settings.RefreshMs);
             }
             if (!_isWindowActive)
             {
-                return 5000;
+                return 2000;
             }
-            return Math.Max(1000, _settings.RefreshMs);
+            return Math.Max(500, _settings.RefreshMs);
         }
 
         private void UpdateRefreshLabels()
@@ -460,7 +474,6 @@ namespace OpenClawMonitor
 
         private void ForceRemotePoll()
         {
-            SaveSettingsFromUi();
             _nextUbuntuPollUtc = DateTime.MinValue;
             _nextLmPollUtc = DateTime.MinValue;
             RefreshNow();
@@ -535,9 +548,9 @@ namespace OpenClawMonitor
         {
             _cpuPanel.SetStatus("LOCAL", Theme.CyanBrush);
             _cpuPanel.SetMetric(0, "USE", Format.Percent(snapshot.CpuPercent), "TOTAL", Theme.PercentBrush(snapshot.CpuPercent));
-            _cpuPanel.SetMetric(1, "PKG W", Format.Watts(snapshot.CpuPackagePowerWatts), "POWER", Theme.ValueBrush);
+            _cpuPanel.SetMetric(1, "CLOCK", "N/A", "GHz", Theme.TextBrush);
             _cpuPanel.SetMetric(2, "CORES", snapshot.LogicalProcessorCount.ToString(CultureInfo.InvariantCulture), "LOGICAL", Theme.TextBrush);
-            _cpuPanel.SetMetric(3, "SAMPLE", snapshot.CapturedAt.ToString("HH:mm:ss", CultureInfo.InvariantCulture), "LOCAL", Theme.MutedBrush);
+            _cpuPanel.SetMetric(3, "PKG W", Format.Watts(snapshot.CpuPackagePowerWatts), "POWER", Theme.ValueBrush);
             _cpuPanel.AddSample(snapshot.CpuPercent);
             _cpuPanel.SetBar(snapshot.CpuPercent);
 
@@ -556,6 +569,12 @@ namespace OpenClawMonitor
             _gpuPanel.SetMetric(3, "POWER", Format.Watts(snapshot.GpuPowerWatts), "NVIDIA-SMI", Theme.ValueBrush);
             _gpuPanel.AddSample(snapshot.GpuUtilizationPercent);
             _gpuPanel.SetBar(snapshot.GpuUtilizationPercent);
+
+            if (_processPanel != null)
+            {
+                _processPanel.RefreshRows();
+            }
+            UpdateFooter(snapshot, null);
         }
 
         private void ApplyUbuntuSnapshot(UbuntuSnapshot snapshot)
@@ -568,6 +587,7 @@ namespace OpenClawMonitor
             _ubuntuPanel.SetMetric(3, "RTT", snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "N/A", ShortError(snapshot.Error), snapshot.Online ? Theme.TextBrush : Theme.RedBrush);
             _ubuntuPanel.AddSample(snapshot.CpuPercent);
             _ubuntuPanel.SetBar(snapshot.CpuPercent);
+            UpdateFooter(null, snapshot);
         }
 
         private void ApplyLmStudioSnapshot(LmStudioSnapshot snapshot)
@@ -623,6 +643,301 @@ namespace OpenClawMonitor
             _remoteSummaryText.Text = state + " " + target;
             _remoteSummaryText.Foreground = state.IndexOf("connected", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.GreenBrush :
                 (state.IndexOf("offline", StringComparison.OrdinalIgnoreCase) >= 0 ? Theme.RedBrush : Theme.MutedBrush);
+        }
+
+        private LocalSnapshot _lastLocalForFooter;
+        private UbuntuSnapshot _lastUbuntuForFooter;
+
+        private void UpdateFooter(LocalSnapshot local, UbuntuSnapshot ubuntu)
+        {
+            if (local != null)
+            {
+                _lastLocalForFooter = local;
+            }
+            if (ubuntu != null)
+            {
+                _lastUbuntuForFooter = ubuntu;
+            }
+            if (_footerText == null)
+            {
+                return;
+            }
+
+            var l = _lastLocalForFooter;
+            var u = _lastUbuntuForFooter;
+            _footerText.Text =
+                "Local Windows  |  CPU " + Format.Percent(l == null ? null : l.CpuPercent) +
+                "  |  MEM " + Format.Percent(l == null ? null : l.MemoryPercent) +
+                "  |  GPU " + Format.Percent(l == null ? null : l.GpuUtilizationPercent) +
+                "  |  Ubuntu LAN (SSH)  |  " + (u != null && u.Online ? "ONLINE" : "OFFLINE") +
+                "  |  CPU " + Format.Percent(u == null ? null : u.CpuPercent) +
+                "  |  MEM " + Format.Percent(u == null ? null : u.MemoryPercent);
+        }
+    }
+
+    public sealed class BtopFrame : Grid
+    {
+        private readonly Border _border;
+        private readonly ContentControl _content;
+
+        public BtopFrame(string title, Brush accent)
+        {
+            Margin = new Thickness(0);
+
+            _border = new Border();
+            _border.Margin = new Thickness(0, 10, 0, 0);
+            _border.Padding = new Thickness(8);
+            _border.BorderThickness = new Thickness(1);
+            _border.BorderBrush = accent;
+            _border.Background = Theme.PanelBrush;
+            Children.Add(_border);
+
+            _content = new ContentControl();
+            _border.Child = _content;
+
+            var label = new Border();
+            label.Background = Theme.Background;
+            label.Padding = new Thickness(8, 0, 8, 0);
+            label.Margin = new Thickness(18, 0, 0, 0);
+            label.HorizontalAlignment = HorizontalAlignment.Left;
+            label.VerticalAlignment = VerticalAlignment.Top;
+
+            var text = new TextBlock();
+            text.Text = title;
+            text.Foreground = accent;
+            text.FontSize = 13;
+            text.FontWeight = FontWeights.Bold;
+            label.Child = text;
+            Children.Add(label);
+        }
+
+        public void SetContent(UIElement element)
+        {
+            _content.Content = element;
+        }
+    }
+
+    public sealed class ProcessPanel : Grid
+    {
+        private readonly Grid _table;
+        private readonly TextBlock _footer;
+
+        public ProcessPanel()
+        {
+            Margin = new Thickness(4);
+            RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            _table = new Grid();
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
+            _table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) });
+            Children.Add(_table);
+
+            _footer = new TextBlock();
+            _footer.Foreground = Theme.MutedBrush;
+            _footer.FontSize = 12;
+            _footer.Margin = new Thickness(0, 7, 0, 0);
+            _footer.Text = "Press R to refresh";
+            Grid.SetRow(_footer, 1);
+            Children.Add(_footer);
+        }
+
+        public void RefreshRows()
+        {
+            _table.Children.Clear();
+            _table.RowDefinitions.Clear();
+            AddRow(0, "PID", "Process", "User", "CPU%", "MEM", "Status", Theme.MutedBrush, false);
+
+            var rows = new List<Process>();
+            try
+            {
+                rows = Process.GetProcesses()
+                    .OrderByDescending(p => SafeWorkingSet(p))
+                    .ThenBy(p => p.ProcessName)
+                    .Take(14)
+                    .ToList();
+            }
+            catch
+            {
+            }
+
+            var row = 1;
+            foreach (var process in rows)
+            {
+                AddRow(
+                    row,
+                    SafeId(process),
+                    SafeName(process),
+                    "local",
+                    "0.0",
+                    Format.Megabytes(SafeWorkingSet(process)),
+                    SafeStatus(process),
+                    row <= 5 ? Theme.GreenBrush : Theme.MutedGreenBrush,
+                    true);
+                row++;
+            }
+            _footer.Text = "Press R to refresh                                             Total: " + rows.Count.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private void AddRow(int row, string pid, string name, string user, string cpu, string mem, string status, Brush valueBrush, bool dataRow)
+        {
+            _table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            AddCell(row, 0, pid, dataRow ? Theme.TextBrush : Theme.MutedBrush, TextAlignment.Right);
+            AddCell(row, 1, name, valueBrush, TextAlignment.Left);
+            AddCell(row, 2, user, Theme.TextBrush, TextAlignment.Left);
+            AddCell(row, 3, cpu, Theme.GreenBrush, TextAlignment.Right);
+            AddCell(row, 4, mem, Theme.BlueBrush, TextAlignment.Right);
+            AddCell(row, 5, status, valueBrush, TextAlignment.Center);
+        }
+
+        private void AddCell(int row, int column, string text, Brush brush, TextAlignment alignment)
+        {
+            var block = new TextBlock();
+            block.Text = text;
+            block.Foreground = brush;
+            block.FontSize = 12;
+            block.Margin = new Thickness(4, 1, 4, 1);
+            block.TextAlignment = alignment;
+            block.TextTrimming = TextTrimming.CharacterEllipsis;
+            Grid.SetRow(block, row);
+            Grid.SetColumn(block, column);
+            _table.Children.Add(block);
+        }
+
+        private static long SafeWorkingSet(Process process)
+        {
+            try { return process.WorkingSet64; }
+            catch { return 0; }
+        }
+
+        private static string SafeId(Process process)
+        {
+            try { return process.Id.ToString(CultureInfo.InvariantCulture); }
+            catch { return "--"; }
+        }
+
+        private static string SafeName(Process process)
+        {
+            try { return process.ProcessName; }
+            catch { return "--"; }
+        }
+
+        private static string SafeStatus(Process process)
+        {
+            try
+            {
+                return process.Responding ? "R" : "S";
+            }
+            catch
+            {
+                return "S";
+            }
+        }
+    }
+
+    public sealed class SettingsWindow : Window
+    {
+        private readonly TextBox _remoteBox;
+        private readonly PasswordBox _passwordBox;
+        private readonly TextBox _lmBox;
+
+        public string RemoteTarget { get; private set; }
+        public string Password { get; private set; }
+        public string LmStudioUrl { get; private set; }
+
+        public SettingsWindow(MonitorSettings settings)
+        {
+            Title = "OpenClaw Monitor Setup";
+            Width = 520;
+            Height = 260;
+            MinWidth = 460;
+            MinHeight = 230;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ResizeMode = ResizeMode.NoResize;
+            Background = Theme.Background;
+            Foreground = Theme.TextBrush;
+            FontFamily = Theme.MonoFont;
+
+            var frame = new BtopFrame("setup", Theme.CyanBrush);
+            frame.Margin = new Thickness(12);
+            var grid = new Grid();
+            grid.Margin = new Thickness(8);
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            _remoteBox = AddTextRow(grid, 0, "REMOTE", settings.UbuntuTarget);
+            _passwordBox = AddPasswordRow(grid, 1, "PASS", settings.UbuntuPassword);
+            _lmBox = AddTextRow(grid, 2, "LM API", settings.LmStudioBaseUrl);
+
+            var buttons = new StackPanel();
+            buttons.Orientation = Orientation.Horizontal;
+            buttons.HorizontalAlignment = HorizontalAlignment.Right;
+            var save = UiFactory.TextButton("save");
+            save.Click += delegate { SaveAndClose(); };
+            buttons.Children.Add(save);
+            var cancel = UiFactory.TextButton("cancel");
+            cancel.Margin = new Thickness(8, 0, 0, 0);
+            cancel.Click += delegate { DialogResult = false; Close(); };
+            buttons.Children.Add(cancel);
+            Grid.SetRow(buttons, 4);
+            Grid.SetColumnSpan(buttons, 2);
+            grid.Children.Add(buttons);
+
+            frame.SetContent(grid);
+            Content = frame;
+        }
+
+        private TextBox AddTextRow(Grid grid, int row, string label, string value)
+        {
+            AddLabel(grid, row, label);
+            var box = UiFactory.InputBox();
+            box.Text = value ?? string.Empty;
+            Grid.SetRow(box, row);
+            Grid.SetColumn(box, 1);
+            grid.Children.Add(box);
+            return box;
+        }
+
+        private PasswordBox AddPasswordRow(Grid grid, int row, string label, string value)
+        {
+            AddLabel(grid, row, label);
+            var box = UiFactory.SecretInputBox();
+            box.Password = value ?? string.Empty;
+            Grid.SetRow(box, row);
+            Grid.SetColumn(box, 1);
+            grid.Children.Add(box);
+            return box;
+        }
+
+        private void AddLabel(Grid grid, int row, string text)
+        {
+            var label = new TextBlock();
+            label.Text = text;
+            label.Foreground = Theme.MutedBrush;
+            label.FontSize = 12;
+            label.Margin = new Thickness(0, 6, 8, 6);
+            label.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetRow(label, row);
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+        }
+
+        private void SaveAndClose()
+        {
+            RemoteTarget = _remoteBox.Text;
+            Password = _passwordBox.Password;
+            LmStudioUrl = _lmBox.Text;
+            DialogResult = true;
+            Close();
         }
     }
 
@@ -1856,9 +2171,17 @@ print(json.dumps({
             {
                 UbuntuPort = 22;
             }
-            if (RefreshMs != 500 && RefreshMs != 1000 && RefreshMs != 2000 && RefreshMs != 5000 && RefreshMs != 10000)
+            if (RefreshMs < 100)
             {
-                RefreshMs = 1000;
+                RefreshMs = 100;
+            }
+            if (RefreshMs > 2000)
+            {
+                RefreshMs = 2000;
+            }
+            if (RefreshMs % 100 != 0)
+            {
+                RefreshMs = (int)(Math.Round(RefreshMs / 100.0) * 100);
             }
             if (LmStudioBaseUrl == null || LmStudioBaseUrl.Trim().Length == 0)
             {
@@ -1886,11 +2209,11 @@ print(json.dumps({
 
             var user = UbuntuUser;
             var hostPort = target;
-            var at = target.IndexOf('@');
-            if (at >= 0)
+            var atParts = target.Split('@');
+            if (atParts.Length >= 2)
             {
-                user = target.Substring(0, at).Trim();
-                hostPort = target.Substring(at + 1).Trim();
+                user = atParts[0].Trim();
+                hostPort = atParts[atParts.Length - 1].Trim();
             }
 
             var port = UbuntuPort;
@@ -1906,7 +2229,7 @@ print(json.dumps({
                 }
             }
 
-            UbuntuTarget = target;
+            UbuntuTarget = (string.IsNullOrWhiteSpace(user) ? "gods" : user) + "@" + (string.IsNullOrWhiteSpace(host) ? "192.168.0.9" : host) + (port != 22 ? ":" + port.ToString(CultureInfo.InvariantCulture) : "");
             UbuntuUser = string.IsNullOrWhiteSpace(user) ? "gods" : user;
             UbuntuHost = string.IsNullOrWhiteSpace(host) ? "192.168.0.9" : host;
             UbuntuPort = port <= 0 ? 22 : port;
@@ -2438,6 +2761,20 @@ print(json.dumps({
             return ((double)bytes / 1024.0 / 1024.0 / 1024.0).ToString("0.0", CultureInfo.InvariantCulture);
         }
 
+        public static string Megabytes(long bytes)
+        {
+            if (bytes <= 0)
+            {
+                return "0B";
+            }
+            var mb = (double)bytes / 1024.0 / 1024.0;
+            if (mb >= 1024)
+            {
+                return (mb / 1024.0).ToString("0.0", CultureInfo.InvariantCulture) + "G";
+            }
+            return mb.ToString("0.0", CultureInfo.InvariantCulture) + "M";
+        }
+
         public static string MemoryPairMb(double? used, double? total)
         {
             if (!used.HasValue || !total.HasValue || total.Value <= 0)
@@ -2484,6 +2821,7 @@ print(json.dumps({
         public static readonly SolidColorBrush SegmentOffBrush = Brush("#0D181A");
         public static readonly SolidColorBrush CyanBrush = Brush("#2DD4BF");
         public static readonly SolidColorBrush GreenBrush = Brush("#A3E635");
+        public static readonly SolidColorBrush MutedGreenBrush = Brush("#76A98A");
         public static readonly SolidColorBrush YellowBrush = Brush("#FACC15");
         public static readonly SolidColorBrush RedBrush = Brush("#FB7185");
         public static readonly SolidColorBrush MagentaBrush = Brush("#F472B6");
