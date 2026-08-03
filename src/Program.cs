@@ -45,7 +45,11 @@ namespace OpenClawMonitor
         private MonitorSettings _settings;
         private bool _isWindowActive = true;
         private bool _refreshInFlight;
+        private bool _localSlowPollInFlight;
+        private bool _ubuntuPollInFlight;
+        private bool _lmPollInFlight;
         private bool _lastUbuntuOnline;
+        private DateTime _nextLocalSlowPollUtc = DateTime.MinValue;
         private DateTime _nextUbuntuPollUtc = DateTime.MinValue;
         private DateTime _nextLmPollUtc = DateTime.MinValue;
 
@@ -377,6 +381,7 @@ namespace OpenClawMonitor
 
             _settingsStore.Save(_settings);
             ApplyMachineNames();
+            _nextLocalSlowPollUtc = DateTime.MinValue;
             _nextUbuntuPollUtc = DateTime.MinValue;
             _nextLmPollUtc = DateTime.MinValue;
             _lmStudioService.ResetLogTailer();
@@ -435,28 +440,21 @@ namespace OpenClawMonitor
 
         private int GetUbuntuPollMs()
         {
-            if (!_settings.AutoMode)
-            {
-                return _lastUbuntuOnline ? Math.Max(1000, _settings.RefreshMs) : Math.Max(3000, _settings.RefreshMs);
-            }
-            if (!_isWindowActive || !_lastUbuntuOnline)
-            {
-                return Math.Max(5000, _settings.RefreshMs * 5);
-            }
-            return Math.Max(1000, _settings.RefreshMs);
+            return GetEffectiveTickMs();
         }
 
         private int GetLmPollMs()
+        {
+            return GetEffectiveTickMs();
+        }
+
+        private int GetLocalSlowPollMs()
         {
             if (!_settings.AutoMode)
             {
                 return Math.Max(1000, _settings.RefreshMs);
             }
-            if (!_isWindowActive)
-            {
-                return 5000;
-            }
-            return Math.Max(1000, _settings.RefreshMs);
+            return _isWindowActive ? Math.Max(1000, _settings.RefreshMs) : Math.Max(5000, _settings.RefreshMs);
         }
 
         private void UpdateRefreshLabels()
@@ -473,6 +471,7 @@ namespace OpenClawMonitor
 
         private void ForceRemotePoll()
         {
+            _nextLocalSlowPollUtc = DateTime.MinValue;
             _nextUbuntuPollUtc = DateTime.MinValue;
             _nextLmPollUtc = DateTime.MinValue;
             RefreshNow();
@@ -496,39 +495,13 @@ namespace OpenClawMonitor
                 var startedUtc = DateTime.UtcNow;
                 _clockText.Text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
+                QueueLocalSlowPoll(startedUtc);
+                QueueUbuntuPoll(startedUtc);
+                QueueLmPoll(startedUtc);
+
                 var localTask = Task.Factory.StartNew(() => _localService.Read());
-                Task<UbuntuSnapshot> ubuntuTask = null;
-                Task<LmStudioSnapshot> lmTask = null;
-
-                if (startedUtc >= _nextUbuntuPollUtc)
-                {
-                    var settingsCopy = _settings.Clone();
-                    ubuntuTask = Task.Factory.StartNew(() => _ubuntuService.Read(settingsCopy));
-                }
-
-                if (startedUtc >= _nextLmPollUtc)
-                {
-                    var settingsCopy = _settings.Clone();
-                    lmTask = Task.Factory.StartNew(() => _lmStudioService.Read(settingsCopy));
-                }
-
                 var local = await localTask;
                 ApplyLocalSnapshot(local);
-
-                if (ubuntuTask != null)
-                {
-                    var ubuntu = await ubuntuTask;
-                    _lastUbuntuOnline = ubuntu.Online;
-                    ApplyUbuntuSnapshot(ubuntu);
-                    _nextUbuntuPollUtc = DateTime.UtcNow.AddMilliseconds(GetUbuntuPollMs());
-                }
-
-                if (lmTask != null)
-                {
-                    var lm = await lmTask;
-                    ApplyLmStudioSnapshot(lm);
-                    _nextLmPollUtc = DateTime.UtcNow.AddMilliseconds(GetLmPollMs());
-                }
 
                 ApplyTimerInterval();
                 SetStatus("OK " + DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
@@ -541,6 +514,99 @@ namespace OpenClawMonitor
             {
                 _refreshInFlight = false;
             }
+        }
+
+        private void QueueLocalSlowPoll(DateTime startedUtc)
+        {
+            if (_localSlowPollInFlight || startedUtc < _nextLocalSlowPollUtc)
+            {
+                return;
+            }
+
+            _localSlowPollInFlight = true;
+            _nextLocalSlowPollUtc = startedUtc.AddMilliseconds(GetLocalSlowPollMs());
+            Task.Factory.StartNew(() => _localService.RefreshSlowTelemetry()).ContinueWith(task =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _localSlowPollInFlight = false;
+                    if (task.IsFaulted)
+                    {
+                        SetStatus("LOCAL ERR " + TaskError(task));
+                    }
+                }));
+            });
+        }
+
+        private void QueueUbuntuPoll(DateTime startedUtc)
+        {
+            if (_ubuntuPollInFlight || startedUtc < _nextUbuntuPollUtc)
+            {
+                return;
+            }
+
+            _ubuntuPollInFlight = true;
+            _nextUbuntuPollUtc = startedUtc.AddMilliseconds(GetUbuntuPollMs());
+            var settingsCopy = _settings.Clone();
+            Task.Factory.StartNew(() => _ubuntuService.Read(settingsCopy)).ContinueWith(task =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _ubuntuPollInFlight = false;
+                    if (task.IsFaulted)
+                    {
+                        var failed = new UbuntuSnapshot();
+                        failed.Online = false;
+                        failed.Error = TaskError(task);
+                        _lastUbuntuOnline = false;
+                        ApplyUbuntuSnapshot(failed);
+                        return;
+                    }
+
+                    var ubuntu = task.Result;
+                    _lastUbuntuOnline = ubuntu.Online;
+                    ApplyUbuntuSnapshot(ubuntu);
+                }));
+            });
+        }
+
+        private void QueueLmPoll(DateTime startedUtc)
+        {
+            if (_lmPollInFlight || startedUtc < _nextLmPollUtc)
+            {
+                return;
+            }
+
+            _lmPollInFlight = true;
+            _nextLmPollUtc = startedUtc.AddMilliseconds(GetLmPollMs());
+            var settingsCopy = _settings.Clone();
+            Task.Factory.StartNew(() => _lmStudioService.Read(settingsCopy)).ContinueWith(task =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _lmPollInFlight = false;
+                    if (task.IsFaulted)
+                    {
+                        var failed = new LmStudioSnapshot();
+                        failed.ServerOnline = false;
+                        failed.Error = TaskError(task);
+                        ApplyLmStudioSnapshot(failed);
+                        return;
+                    }
+
+                    ApplyLmStudioSnapshot(task.Result);
+                }));
+            });
+        }
+
+        private static string TaskError(Task task)
+        {
+            if (task == null || task.Exception == null)
+            {
+                return "FAILED";
+            }
+            var ex = task.Exception.GetBaseException();
+            return ex == null || string.IsNullOrWhiteSpace(ex.Message) ? "FAILED" : ex.Message;
         }
 
         private void ApplyLocalSnapshot(LocalSnapshot snapshot)
@@ -1947,15 +2013,14 @@ namespace OpenClawMonitor
 
     public sealed class LocalMonitorService
     {
+        private readonly object _cacheGate = new object();
         private readonly PerformanceCounter _cpuCounter;
         private readonly CpuPowerReader _cpuPowerReader;
         private readonly string _nvidiaSmiPath;
         private DateTime _lastNetworkUtc;
         private ulong _lastNetworkRxBytes;
         private ulong _lastNetworkTxBytes;
-        private DateTime _nextCpuPowerReadUtc = DateTime.MinValue;
         private double? _cachedCpuPackagePowerWatts;
-        private DateTime _nextGpuReadUtc = DateTime.MinValue;
         private bool _cachedGpuAvailable;
         private double? _cachedGpuUtilizationPercent;
         private double? _cachedGpuTemperatureCelsius;
@@ -1996,22 +2061,40 @@ namespace OpenClawMonitor
                 snapshot.CpuPercent = null;
             }
 
-            ReadCpuPower(snapshot);
+            ApplyCachedSlowTelemetry(snapshot);
             ReadMemory(snapshot);
-            ReadGpu(snapshot);
             ReadNetwork(snapshot);
             return snapshot;
         }
 
-        private void ReadCpuPower(LocalSnapshot snapshot)
+        public void RefreshSlowTelemetry()
         {
-            var now = DateTime.UtcNow;
-            if (now >= _nextCpuPowerReadUtc)
+            var cpuPower = _cpuPowerReader.ReadWatts();
+            var gpu = ReadGpuTelemetry();
+            lock (_cacheGate)
             {
-                _cachedCpuPackagePowerWatts = _cpuPowerReader.ReadWatts();
-                _nextCpuPowerReadUtc = now.AddMilliseconds(1000);
+                _cachedCpuPackagePowerWatts = cpuPower;
+                _cachedGpuAvailable = gpu.Available;
+                _cachedGpuUtilizationPercent = gpu.UtilizationPercent;
+                _cachedGpuTemperatureCelsius = gpu.TemperatureCelsius;
+                _cachedGpuMemoryUsedMb = gpu.MemoryUsedMb;
+                _cachedGpuMemoryTotalMb = gpu.MemoryTotalMb;
+                _cachedGpuPowerWatts = gpu.PowerWatts;
             }
-            snapshot.CpuPackagePowerWatts = _cachedCpuPackagePowerWatts;
+        }
+
+        private void ApplyCachedSlowTelemetry(LocalSnapshot snapshot)
+        {
+            lock (_cacheGate)
+            {
+                snapshot.CpuPackagePowerWatts = _cachedCpuPackagePowerWatts;
+                snapshot.GpuAvailable = _cachedGpuAvailable;
+                snapshot.GpuUtilizationPercent = _cachedGpuUtilizationPercent;
+                snapshot.GpuTemperatureCelsius = _cachedGpuTemperatureCelsius;
+                snapshot.GpuMemoryUsedMb = _cachedGpuMemoryUsedMb;
+                snapshot.GpuMemoryTotalMb = _cachedGpuMemoryTotalMb;
+                snapshot.GpuPowerWatts = _cachedGpuPowerWatts;
+            }
         }
 
         private void ReadMemory(LocalSnapshot snapshot)
@@ -2026,21 +2109,13 @@ namespace OpenClawMonitor
             }
         }
 
-        private void ReadGpu(LocalSnapshot snapshot)
+        private GpuTelemetry ReadGpuTelemetry()
         {
-            var now = DateTime.UtcNow;
-            if (now < _nextGpuReadUtc)
-            {
-                ApplyCachedGpu(snapshot);
-                return;
-            }
-
+            var telemetry = new GpuTelemetry();
             if (string.IsNullOrEmpty(_nvidiaSmiPath))
             {
-                _cachedGpuAvailable = false;
-                _nextGpuReadUtc = now.AddSeconds(5);
-                ApplyCachedGpu(snapshot);
-                return;
+                telemetry.Available = false;
+                return telemetry;
             }
 
             var args = new[]
@@ -2051,48 +2126,32 @@ namespace OpenClawMonitor
             var result = ProcessRunner.Run(_nvidiaSmiPath, args, 1800, null);
             if (!result.Success || string.IsNullOrWhiteSpace(result.StdOut))
             {
-                _cachedGpuAvailable = false;
-                _nextGpuReadUtc = now.AddSeconds(2);
-                ApplyCachedGpu(snapshot);
-                return;
+                telemetry.Available = false;
+                return telemetry;
             }
 
             var line = result.StdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
             if (string.IsNullOrWhiteSpace(line))
             {
-                _cachedGpuAvailable = false;
-                _nextGpuReadUtc = now.AddSeconds(2);
-                ApplyCachedGpu(snapshot);
-                return;
+                telemetry.Available = false;
+                return telemetry;
             }
 
             var fields = line.Split(',');
             if (fields.Length >= 5)
             {
-                _cachedGpuAvailable = true;
-                _cachedGpuUtilizationPercent = ParseNullableDouble(fields[0]);
-                _cachedGpuTemperatureCelsius = ParseNullableDouble(fields[1]);
-                _cachedGpuMemoryUsedMb = ParseNullableDouble(fields[2]);
-                _cachedGpuMemoryTotalMb = ParseNullableDouble(fields[3]);
-                _cachedGpuPowerWatts = ParseNullableDouble(fields[4]);
-                _nextGpuReadUtc = now.AddMilliseconds(1000);
+                telemetry.Available = true;
+                telemetry.UtilizationPercent = ParseNullableDouble(fields[0]);
+                telemetry.TemperatureCelsius = ParseNullableDouble(fields[1]);
+                telemetry.MemoryUsedMb = ParseNullableDouble(fields[2]);
+                telemetry.MemoryTotalMb = ParseNullableDouble(fields[3]);
+                telemetry.PowerWatts = ParseNullableDouble(fields[4]);
             }
             else
             {
-                _cachedGpuAvailable = false;
-                _nextGpuReadUtc = now.AddSeconds(2);
+                telemetry.Available = false;
             }
-            ApplyCachedGpu(snapshot);
-        }
-
-        private void ApplyCachedGpu(LocalSnapshot snapshot)
-        {
-            snapshot.GpuAvailable = _cachedGpuAvailable;
-            snapshot.GpuUtilizationPercent = _cachedGpuUtilizationPercent;
-            snapshot.GpuTemperatureCelsius = _cachedGpuTemperatureCelsius;
-            snapshot.GpuMemoryUsedMb = _cachedGpuMemoryUsedMb;
-            snapshot.GpuMemoryTotalMb = _cachedGpuMemoryTotalMb;
-            snapshot.GpuPowerWatts = _cachedGpuPowerWatts;
+            return telemetry;
         }
 
         private void ReadNetwork(LocalSnapshot snapshot)
@@ -2156,6 +2215,16 @@ namespace OpenClawMonitor
             }
             double parsed;
             return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) ? parsed : (double?)null;
+        }
+
+        private sealed class GpuTelemetry
+        {
+            public bool Available { get; set; }
+            public double? UtilizationPercent { get; set; }
+            public double? TemperatureCelsius { get; set; }
+            public double? MemoryUsedMb { get; set; }
+            public double? MemoryTotalMb { get; set; }
+            public double? PowerWatts { get; set; }
         }
     }
 
