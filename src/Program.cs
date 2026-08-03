@@ -111,6 +111,7 @@ namespace OpenClawMonitor
             };
             Closed += delegate
             {
+                _ubuntuService.Dispose();
                 _lmStudioService.Dispose();
             };
             SizeChanged += delegate { ApplyResponsiveLayout(); };
@@ -436,26 +437,26 @@ namespace OpenClawMonitor
         {
             if (!_settings.AutoMode)
             {
-                return _lastUbuntuOnline ? _settings.RefreshMs : Math.Max(2000, _settings.RefreshMs);
+                return _lastUbuntuOnline ? Math.Max(1000, _settings.RefreshMs) : Math.Max(3000, _settings.RefreshMs);
             }
             if (!_isWindowActive || !_lastUbuntuOnline)
             {
-                return Math.Max(2000, _settings.RefreshMs * 5);
+                return Math.Max(5000, _settings.RefreshMs * 5);
             }
-            return _settings.RefreshMs;
+            return Math.Max(1000, _settings.RefreshMs);
         }
 
         private int GetLmPollMs()
         {
             if (!_settings.AutoMode)
             {
-                return Math.Max(500, _settings.RefreshMs);
+                return Math.Max(1000, _settings.RefreshMs);
             }
             if (!_isWindowActive)
             {
-                return 2000;
+                return 5000;
             }
-            return Math.Max(500, _settings.RefreshMs);
+            return Math.Max(1000, _settings.RefreshMs);
         }
 
         private void UpdateRefreshLabels()
@@ -689,6 +690,7 @@ namespace OpenClawMonitor
         public BtopFrame(string title, Brush accent)
         {
             Margin = new Thickness(0);
+            ClipToBounds = true;
 
             _border = new Border();
             _border.Margin = new Thickness(0, 10, 0, 0);
@@ -696,9 +698,11 @@ namespace OpenClawMonitor
             _border.BorderThickness = new Thickness(1);
             _border.BorderBrush = accent;
             _border.Background = Theme.PanelBrush;
+            _border.ClipToBounds = true;
             Children.Add(_border);
 
             _content = new ContentControl();
+            _content.ClipToBounds = true;
             _border.Child = _content;
 
             var label = new Border();
@@ -727,7 +731,6 @@ namespace OpenClawMonitor
     {
         private readonly HostCpuStrip _local;
         private readonly HostCpuStrip _ubuntu;
-        private readonly TextBlock _summaryTitle;
         private readonly TextBlock _summaryCpu;
         private readonly TextBlock _summaryUbuntu;
         private readonly TextBlock _summaryCpuPower;
@@ -760,13 +763,11 @@ namespace OpenClawMonitor
             summary.Margin = new Thickness(10, 28, 0, 28);
 
             var stack = new StackPanel();
-            _summaryTitle = SummaryLine("OpenClaw CPU", Theme.TextBrush, 18, true);
-            _summaryCpu = SummaryLine("LOCAL  --", Theme.GreenBrush, 16, true);
-            _summaryUbuntu = SummaryLine(_remoteName + "  --", Theme.YellowBrush, 16, true);
-            _summaryCpuPower = SummaryLine("CPU PWR --", Theme.TextBrush, 14, false);
-            _summaryGpuPower = SummaryLine("GPU PWR --", Theme.TextBrush, 14, false);
-            _summaryLatency = SummaryLine("SSH    --", Theme.MutedBrush, 14, false);
-            stack.Children.Add(_summaryTitle);
+            _summaryCpu = SummaryLine(SummaryPair("local", "--"), Theme.GreenBrush, 15, true);
+            _summaryUbuntu = SummaryLine(SummaryPair(_remoteName, "--"), Theme.YellowBrush, 15, true);
+            _summaryCpuPower = SummaryLine(SummaryPair("cpu pwr", "--"), Theme.TextBrush, 13, false);
+            _summaryGpuPower = SummaryLine(SummaryPair("gpu pwr", "--"), Theme.TextBrush, 13, false);
+            _summaryLatency = SummaryLine(SummaryPair("ssh", "--"), Theme.MutedBrush, 13, false);
             stack.Children.Add(_summaryCpu);
             stack.Children.Add(_summaryUbuntu);
             stack.Children.Add(_summaryCpuPower);
@@ -783,17 +784,17 @@ namespace OpenClawMonitor
         public void SetLocal(LocalSnapshot snapshot)
         {
             _local.Set(snapshot.CpuPercent, snapshot.LogicalProcessorCount.ToString(CultureInfo.InvariantCulture) + " threads", Format.Watts(snapshot.CpuPackagePowerWatts));
-            _summaryCpu.Text = "LOCAL  " + Format.Percent(snapshot.CpuPercent);
-            _summaryCpuPower.Text = "CPU PWR " + Format.Watts(snapshot.CpuPackagePowerWatts);
-            _summaryGpuPower.Text = "GPU PWR " + Format.Watts(snapshot.GpuPowerWatts);
+            _summaryCpu.Text = SummaryPair("local", Format.Percent(snapshot.CpuPercent));
+            _summaryCpuPower.Text = SummaryPair("cpu pwr", Format.Watts(snapshot.CpuPackagePowerWatts));
+            _summaryGpuPower.Text = SummaryPair("gpu pwr", Format.Watts(snapshot.GpuPowerWatts));
         }
 
         public void SetUbuntu(UbuntuSnapshot snapshot)
         {
             _ubuntu.Set(snapshot.CpuPercent, snapshot.Online ? "online" : "offline", Format.Watts(snapshot.PowerWatts));
-            _summaryUbuntu.Text = _remoteName + "  " + Format.Percent(snapshot.CpuPercent);
+            _summaryUbuntu.Text = SummaryPair(_remoteName, Format.Percent(snapshot.CpuPercent));
             _summaryUbuntu.Foreground = snapshot.Online ? Theme.YellowBrush : Theme.RedBrush;
-            _summaryLatency.Text = "SSH    " + (snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "offline");
+            _summaryLatency.Text = SummaryPair("ssh", snapshot.Online ? snapshot.LatencyMs.ToString("0", CultureInfo.InvariantCulture) + "ms" : "offline");
             _summaryLatency.Foreground = snapshot.Online ? Theme.MutedBrush : Theme.RedBrush;
         }
 
@@ -801,7 +802,7 @@ namespace OpenClawMonitor
         {
             _remoteName = string.IsNullOrWhiteSpace(name) ? "GPU Machine" : name.Trim();
             _ubuntu.SetTitle(_remoteName);
-            _summaryUbuntu.Text = _remoteName + "  --";
+            _summaryUbuntu.Text = SummaryPair(_remoteName, "--");
         }
 
         private static TextBlock SummaryLine(string text, Brush brush, double size, bool bold)
@@ -814,6 +815,16 @@ namespace OpenClawMonitor
             block.Margin = new Thickness(0, 3, 0, 3);
             block.TextTrimming = TextTrimming.CharacterEllipsis;
             return block;
+        }
+
+        private static string SummaryPair(string label, string value)
+        {
+            label = string.IsNullOrWhiteSpace(label) ? "--" : label.Trim();
+            if (label.Length > 11)
+            {
+                label = label.Substring(0, 10) + ".";
+            }
+            return label.PadRight(12) + (value ?? "--");
         }
     }
 
@@ -1098,64 +1109,71 @@ namespace OpenClawMonitor
         private readonly TextBlock _lmStatus;
         private readonly TextBlock _lmModel;
         private readonly TextBlock _lmProcessing;
-        private readonly TextBlock _lmTokens;
+        private readonly TextBlock _lmTokensPerSecond;
+        private readonly TextBlock _lmTokenTotal;
 
         public BtopAuxPanel()
         {
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            ClipToBounds = true;
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            _gpuUtil = Line("GPU UTIL --", Theme.BlueBrush, 12, true);
-            _gpuTemp = Line("GPU TEMP --", Theme.TextBrush, 12, false);
-            _gpuVram = Line("VRAM --", Theme.TextBrush, 12, false);
-            _gpuPower = Line("GPU PWR --", Theme.YellowBrush, 12, false);
-            _lmStatus = Line("LM Studio --", Theme.MagentaBrush, 12, true);
-            _lmModel = Line("MODEL --", Theme.TextBrush, 12, false);
-            _lmProcessing = Line("PROC --", Theme.TextBrush, 12, false);
-            _lmTokens = Line("TOK/S --  TOKENS --", Theme.TextBrush, 12, false);
+            var gpuGroup = Group("gpu", Theme.BlueBrush);
+            _gpuUtil = Line("util --", Theme.BlueBrush, 11, true);
+            _gpuTemp = Line("temp --", Theme.TextBrush, 11, false);
+            _gpuVram = Line("vram --", Theme.TextBrush, 11, false);
+            _gpuPower = Line("pwr --", Theme.YellowBrush, 11, false);
+            gpuGroup.Children.Add(_gpuUtil);
+            gpuGroup.Children.Add(_gpuTemp);
+            gpuGroup.Children.Add(_gpuVram);
+            gpuGroup.Children.Add(_gpuPower);
 
-            Add(_gpuUtil, 0);
-            Add(_gpuTemp, 1);
-            Add(_gpuVram, 2);
-            Add(_gpuPower, 3);
-            Add(_lmStatus, 5);
-            Add(_lmModel, 6);
-            Add(_lmProcessing, 7);
-            Add(_lmTokens, 8);
+            var lmGroup = Group("lm studio", Theme.MagentaBrush);
+            _lmStatus = Line("offline", Theme.RedBrush, 11, true);
+            _lmModel = Line("model --", Theme.TextBrush, 11, false);
+            _lmProcessing = Line("proc --", Theme.TextBrush, 11, false);
+            _lmTokensPerSecond = Line("tok/s --", Theme.TextBrush, 11, false);
+            _lmTokenTotal = Line("tokens --", Theme.TextBrush, 11, false);
+            lmGroup.Children.Add(_lmStatus);
+            lmGroup.Children.Add(_lmModel);
+            lmGroup.Children.Add(_lmProcessing);
+            lmGroup.Children.Add(_lmTokensPerSecond);
+            lmGroup.Children.Add(_lmTokenTotal);
+
+            Grid.SetColumn(gpuGroup, 0);
+            Grid.SetColumn(lmGroup, 1);
+            Children.Add(gpuGroup);
+            Children.Add(lmGroup);
         }
 
         public void SetLocal(LocalSnapshot snapshot)
         {
-            _gpuUtil.Text = "GPU UTIL " + Format.Percent(snapshot.GpuUtilizationPercent);
+            _gpuUtil.Text = "util " + Format.Percent(snapshot.GpuUtilizationPercent);
             _gpuUtil.Foreground = snapshot.GpuAvailable ? Theme.BlueBrush : Theme.MutedBrush;
-            _gpuTemp.Text = "GPU TEMP " + Format.Temperature(snapshot.GpuTemperatureCelsius);
-            _gpuVram.Text = "VRAM " + Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb) + " MB";
-            _gpuPower.Text = "GPU PWR " + Format.Watts(snapshot.GpuPowerWatts);
+            _gpuTemp.Text = "temp " + Format.Temperature(snapshot.GpuTemperatureCelsius);
+            _gpuVram.Text = "vram " + Format.MemoryPairMb(snapshot.GpuMemoryUsedMb, snapshot.GpuMemoryTotalMb) + "M";
+            _gpuPower.Text = "pwr  " + Format.Watts(snapshot.GpuPowerWatts);
         }
 
         public void SetLm(LmStudioSnapshot snapshot)
         {
             var model = string.IsNullOrWhiteSpace(snapshot.ActiveModel) ? "N/A" : snapshot.ActiveModel.Trim();
-            _lmStatus.Text = "LM Studio " + (snapshot.ServerOnline ? "ONLINE" : "OFFLINE");
+            _lmStatus.Text = snapshot.ServerOnline ? "online" : "offline";
             _lmStatus.Foreground = snapshot.ServerOnline ? Theme.MagentaBrush : Theme.RedBrush;
-            _lmModel.Text = "MODEL " + ShortValue(model, 26);
+            _lmModel.Text = "model " + ShortValue(model, 14);
             _lmModel.ToolTip = model;
-            _lmProcessing.Text = "PROC " + Format.Processing(snapshot.IsProcessing);
+            _lmProcessing.Text = "proc " + Format.Processing(snapshot.IsProcessing).ToLowerInvariant();
             _lmProcessing.Foreground = ProcessingBrush(snapshot.IsProcessing);
-            _lmTokens.Text = "TOK/S " + Format.Number(snapshot.TokensPerSecond) + "  TOKENS " + Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens);
+            _lmTokensPerSecond.Text = "tok/s " + Format.Number(snapshot.TokensPerSecond);
+            _lmTokenTotal.Text = "tokens " + Format.TokenPair(snapshot.SessionInputTokens, snapshot.SessionOutputTokens);
         }
 
-        private void Add(UIElement element, int row)
+        private static StackPanel Group(string title, Brush brush)
         {
-            Grid.SetRow(element, row);
-            Children.Add(element);
+            var stack = new StackPanel();
+            stack.Margin = new Thickness(4, 0, 4, 0);
+            stack.Children.Add(Line(title, brush, 11, true));
+            return stack;
         }
 
         private static TextBlock Line(string value, Brush brush, double size, bool bold)
@@ -1165,8 +1183,9 @@ namespace OpenClawMonitor
             block.Foreground = brush;
             block.FontSize = size;
             block.FontWeight = bold ? FontWeights.Bold : FontWeights.Normal;
-            block.Margin = new Thickness(4, 2, 4, 2);
+            block.Margin = new Thickness(0, 1, 0, 1);
             block.TextTrimming = TextTrimming.CharacterEllipsis;
+            block.TextWrapping = TextWrapping.NoWrap;
             return block;
         }
 
@@ -1208,6 +1227,7 @@ namespace OpenClawMonitor
         private bool _ubuntuOnline;
         private string _ubuntuStatus;
         private string _remoteName;
+        private DateTime _nextLocalProcessRefreshUtc = DateTime.MinValue;
 
         public ProcessPanel()
         {
@@ -1285,6 +1305,12 @@ namespace OpenClawMonitor
 
         public void RefreshLocalRows()
         {
+            var now = DateTime.UtcNow;
+            if (now < _nextLocalProcessRefreshUtc && _localRows.Count > 0)
+            {
+                return;
+            }
+            _nextLocalProcessRefreshUtc = now.AddMilliseconds(1000);
             _localRows = CaptureLocalRows();
             if (!_showUbuntu)
             {
@@ -1927,6 +1953,15 @@ namespace OpenClawMonitor
         private DateTime _lastNetworkUtc;
         private ulong _lastNetworkRxBytes;
         private ulong _lastNetworkTxBytes;
+        private DateTime _nextCpuPowerReadUtc = DateTime.MinValue;
+        private double? _cachedCpuPackagePowerWatts;
+        private DateTime _nextGpuReadUtc = DateTime.MinValue;
+        private bool _cachedGpuAvailable;
+        private double? _cachedGpuUtilizationPercent;
+        private double? _cachedGpuTemperatureCelsius;
+        private double? _cachedGpuMemoryUsedMb;
+        private double? _cachedGpuMemoryTotalMb;
+        private double? _cachedGpuPowerWatts;
 
         public LocalMonitorService()
         {
@@ -1961,11 +1996,22 @@ namespace OpenClawMonitor
                 snapshot.CpuPercent = null;
             }
 
-            snapshot.CpuPackagePowerWatts = _cpuPowerReader.ReadWatts();
+            ReadCpuPower(snapshot);
             ReadMemory(snapshot);
             ReadGpu(snapshot);
             ReadNetwork(snapshot);
             return snapshot;
+        }
+
+        private void ReadCpuPower(LocalSnapshot snapshot)
+        {
+            var now = DateTime.UtcNow;
+            if (now >= _nextCpuPowerReadUtc)
+            {
+                _cachedCpuPackagePowerWatts = _cpuPowerReader.ReadWatts();
+                _nextCpuPowerReadUtc = now.AddMilliseconds(1000);
+            }
+            snapshot.CpuPackagePowerWatts = _cachedCpuPackagePowerWatts;
         }
 
         private void ReadMemory(LocalSnapshot snapshot)
@@ -1982,9 +2028,18 @@ namespace OpenClawMonitor
 
         private void ReadGpu(LocalSnapshot snapshot)
         {
+            var now = DateTime.UtcNow;
+            if (now < _nextGpuReadUtc)
+            {
+                ApplyCachedGpu(snapshot);
+                return;
+            }
+
             if (string.IsNullOrEmpty(_nvidiaSmiPath))
             {
-                snapshot.GpuAvailable = false;
+                _cachedGpuAvailable = false;
+                _nextGpuReadUtc = now.AddSeconds(5);
+                ApplyCachedGpu(snapshot);
                 return;
             }
 
@@ -1996,27 +2051,48 @@ namespace OpenClawMonitor
             var result = ProcessRunner.Run(_nvidiaSmiPath, args, 1800, null);
             if (!result.Success || string.IsNullOrWhiteSpace(result.StdOut))
             {
-                snapshot.GpuAvailable = false;
+                _cachedGpuAvailable = false;
+                _nextGpuReadUtc = now.AddSeconds(2);
+                ApplyCachedGpu(snapshot);
                 return;
             }
 
             var line = result.StdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
             if (string.IsNullOrWhiteSpace(line))
             {
-                snapshot.GpuAvailable = false;
+                _cachedGpuAvailable = false;
+                _nextGpuReadUtc = now.AddSeconds(2);
+                ApplyCachedGpu(snapshot);
                 return;
             }
 
             var fields = line.Split(',');
             if (fields.Length >= 5)
             {
-                snapshot.GpuAvailable = true;
-                snapshot.GpuUtilizationPercent = ParseNullableDouble(fields[0]);
-                snapshot.GpuTemperatureCelsius = ParseNullableDouble(fields[1]);
-                snapshot.GpuMemoryUsedMb = ParseNullableDouble(fields[2]);
-                snapshot.GpuMemoryTotalMb = ParseNullableDouble(fields[3]);
-                snapshot.GpuPowerWatts = ParseNullableDouble(fields[4]);
+                _cachedGpuAvailable = true;
+                _cachedGpuUtilizationPercent = ParseNullableDouble(fields[0]);
+                _cachedGpuTemperatureCelsius = ParseNullableDouble(fields[1]);
+                _cachedGpuMemoryUsedMb = ParseNullableDouble(fields[2]);
+                _cachedGpuMemoryTotalMb = ParseNullableDouble(fields[3]);
+                _cachedGpuPowerWatts = ParseNullableDouble(fields[4]);
+                _nextGpuReadUtc = now.AddMilliseconds(1000);
             }
+            else
+            {
+                _cachedGpuAvailable = false;
+                _nextGpuReadUtc = now.AddSeconds(2);
+            }
+            ApplyCachedGpu(snapshot);
+        }
+
+        private void ApplyCachedGpu(LocalSnapshot snapshot)
+        {
+            snapshot.GpuAvailable = _cachedGpuAvailable;
+            snapshot.GpuUtilizationPercent = _cachedGpuUtilizationPercent;
+            snapshot.GpuTemperatureCelsius = _cachedGpuTemperatureCelsius;
+            snapshot.GpuMemoryUsedMb = _cachedGpuMemoryUsedMb;
+            snapshot.GpuMemoryTotalMb = _cachedGpuMemoryTotalMb;
+            snapshot.GpuPowerWatts = _cachedGpuPowerWatts;
         }
 
         private void ReadNetwork(LocalSnapshot snapshot)
@@ -2148,8 +2224,19 @@ namespace OpenClawMonitor
         }
     }
 
-    public sealed class UbuntuMonitorService
+    public sealed class UbuntuMonitorService : IDisposable
     {
+        private readonly object _clientGate = new object();
+        private SshClient _passwordClient;
+        private string _passwordClientKey = string.Empty;
+        private string _remoteStatsKey = string.Empty;
+        private DateTime _lastRemoteStatsUtc = DateTime.MinValue;
+        private double? _lastRemoteCpuIdle;
+        private double? _lastRemoteCpuTotal;
+        private double? _lastRemoteEnergyUj;
+        private ulong _lastRemoteNetworkRxTotal;
+        private ulong _lastRemoteNetworkTxTotal;
+
         public UbuntuSnapshot Read(MonitorSettings settings)
         {
             var sw = Stopwatch.StartNew();
@@ -2163,11 +2250,14 @@ namespace OpenClawMonitor
                 return snapshot;
             }
 
+            TrackRemoteTarget(settings);
+
             if (!string.IsNullOrWhiteSpace(settings.UbuntuPassword))
             {
                 return ReadWithPassword(settings, sw, snapshot);
             }
 
+            DisposePasswordClient();
             var keyPath = Environment.ExpandEnvironmentVariables(settings.UbuntuKeyPath);
             if (!File.Exists(keyPath))
             {
@@ -2213,13 +2303,12 @@ namespace OpenClawMonitor
         {
             try
             {
-                using (var client = new SshClient(settings.UbuntuHost, settings.UbuntuPort, settings.UbuntuUser, settings.UbuntuPassword))
+                lock (_clientGate)
                 {
-                    client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(4);
-                    client.Connect();
+                    var client = EnsurePasswordClient(settings);
                     using (var command = client.CreateCommand("python3 - <<'PY'\n" + RemotePython + "\nPY"))
                     {
-                        command.CommandTimeout = TimeSpan.FromSeconds(7);
+                        command.CommandTimeout = TimeSpan.FromSeconds(4);
                         var output = command.Execute();
                         sw.Stop();
                         snapshot.LatencyMs = sw.Elapsed.TotalMilliseconds;
@@ -2234,11 +2323,94 @@ namespace OpenClawMonitor
             }
             catch (Exception ex)
             {
+                DisposePasswordClient();
                 sw.Stop();
                 snapshot.LatencyMs = sw.Elapsed.TotalMilliseconds;
                 snapshot.Error = ex.Message;
                 return snapshot;
             }
+        }
+
+        private SshClient EnsurePasswordClient(MonitorSettings settings)
+        {
+            var key = PasswordClientKey(settings);
+            if (_passwordClient != null && _passwordClientKey == key && _passwordClient.IsConnected)
+            {
+                return _passwordClient;
+            }
+
+            DisposePasswordClientUnlocked();
+            var client = new SshClient(settings.UbuntuHost, settings.UbuntuPort, settings.UbuntuUser, settings.UbuntuPassword);
+            client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(4);
+            client.KeepAliveInterval = TimeSpan.FromSeconds(15);
+            client.Connect();
+            _passwordClient = client;
+            _passwordClientKey = key;
+            return _passwordClient;
+        }
+
+        private static string PasswordClientKey(MonitorSettings settings)
+        {
+            return (settings.UbuntuUser ?? string.Empty) + "@" +
+                (settings.UbuntuHost ?? string.Empty) + ":" +
+                settings.UbuntuPort.ToString(CultureInfo.InvariantCulture) + "|" +
+                (settings.UbuntuPassword ?? string.Empty);
+        }
+
+        private void TrackRemoteTarget(MonitorSettings settings)
+        {
+            var key = (settings.UbuntuUser ?? string.Empty) + "@" +
+                (settings.UbuntuHost ?? string.Empty) + ":" +
+                settings.UbuntuPort.ToString(CultureInfo.InvariantCulture);
+            if (key == _remoteStatsKey)
+            {
+                return;
+            }
+            _remoteStatsKey = key;
+            ResetRemoteDeltas();
+        }
+
+        private void ResetRemoteDeltas()
+        {
+            _lastRemoteStatsUtc = DateTime.MinValue;
+            _lastRemoteCpuIdle = null;
+            _lastRemoteCpuTotal = null;
+            _lastRemoteEnergyUj = null;
+            _lastRemoteNetworkRxTotal = 0;
+            _lastRemoteNetworkTxTotal = 0;
+        }
+
+        public void Dispose()
+        {
+            DisposePasswordClient();
+        }
+
+        private void DisposePasswordClient()
+        {
+            lock (_clientGate)
+            {
+                DisposePasswordClientUnlocked();
+            }
+        }
+
+        private void DisposePasswordClientUnlocked()
+        {
+            if (_passwordClient != null)
+            {
+                try
+                {
+                    if (_passwordClient.IsConnected)
+                    {
+                        _passwordClient.Disconnect();
+                    }
+                }
+                catch
+                {
+                }
+                _passwordClient.Dispose();
+                _passwordClient = null;
+            }
+            _passwordClientKey = string.Empty;
         }
 
         private static string ExtractJson(string output)
@@ -2276,7 +2448,7 @@ namespace OpenClawMonitor
             return "OFFLINE";
         }
 
-        private static UbuntuSnapshot ParseRemoteJson(string output, UbuntuSnapshot snapshot)
+        private UbuntuSnapshot ParseRemoteJson(string output, UbuntuSnapshot snapshot)
         {
             var json = ExtractJson(output);
             if (string.IsNullOrWhiteSpace(json))
@@ -2294,17 +2466,34 @@ namespace OpenClawMonitor
                     return snapshot;
                 }
                 snapshot.Online = true;
-                snapshot.CpuPercent = JsonHelper.GetDouble(root, "cpu_percent");
+                var nowUtc = DateTime.UtcNow;
+                var cpuIdle = JsonHelper.GetDouble(root, "cpu_idle");
+                var cpuTotal = JsonHelper.GetDouble(root, "cpu_total");
+                var energyUj = JsonHelper.GetDouble(root, "energy_uj");
+                var networkRx = JsonHelper.GetUlong(root, "network_rx_total");
+                var networkTx = JsonHelper.GetUlong(root, "network_tx_total");
+
+                snapshot.CpuPercent = CalculateRemoteCpuPercent(cpuIdle, cpuTotal);
                 snapshot.MemoryPercent = JsonHelper.GetDouble(root, "memory_percent");
                 snapshot.MemoryUsedMb = JsonHelper.GetDouble(root, "memory_used_mb");
                 snapshot.MemoryTotalMb = JsonHelper.GetDouble(root, "memory_total_mb");
-                snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
-                snapshot.NetworkRxBytesPerSec = JsonHelper.GetDouble(root, "network_rx_bps");
-                snapshot.NetworkTxBytesPerSec = JsonHelper.GetDouble(root, "network_tx_bps");
-                snapshot.NetworkRxTotalBytes = JsonHelper.GetUlong(root, "network_rx_total");
-                snapshot.NetworkTxTotalBytes = JsonHelper.GetUlong(root, "network_tx_total");
+                snapshot.PowerWatts = CalculateRemotePowerWatts(energyUj);
+                if (!snapshot.PowerWatts.HasValue)
+                {
+                    snapshot.PowerWatts = JsonHelper.GetDouble(root, "power_watts");
+                }
+                snapshot.NetworkRxTotalBytes = networkRx;
+                snapshot.NetworkTxTotalBytes = networkTx;
+                CalculateRemoteNetworkRates(nowUtc, networkRx, networkTx, snapshot);
                 snapshot.Processes = ParseProcessRows(JsonHelper.GetArray(root, "processes"));
                 snapshot.Error = string.Empty;
+
+                _lastRemoteStatsUtc = nowUtc;
+                _lastRemoteCpuIdle = cpuIdle;
+                _lastRemoteCpuTotal = cpuTotal;
+                _lastRemoteEnergyUj = energyUj;
+                _lastRemoteNetworkRxTotal = networkRx;
+                _lastRemoteNetworkTxTotal = networkTx;
                 return snapshot;
             }
             catch (Exception ex)
@@ -2312,6 +2501,50 @@ namespace OpenClawMonitor
                 snapshot.Error = ex.Message;
                 return snapshot;
             }
+        }
+
+        private double? CalculateRemoteCpuPercent(double? cpuIdle, double? cpuTotal)
+        {
+            if (!cpuIdle.HasValue || !cpuTotal.HasValue || !_lastRemoteCpuIdle.HasValue || !_lastRemoteCpuTotal.HasValue)
+            {
+                return null;
+            }
+            var totalDelta = cpuTotal.Value - _lastRemoteCpuTotal.Value;
+            var idleDelta = cpuIdle.Value - _lastRemoteCpuIdle.Value;
+            if (totalDelta <= 0 || idleDelta < 0)
+            {
+                return null;
+            }
+            return Math.Max(0.0, Math.Min(100.0, (1.0 - idleDelta / totalDelta) * 100.0));
+        }
+
+        private double? CalculateRemotePowerWatts(double? energyUj)
+        {
+            if (!energyUj.HasValue || !_lastRemoteEnergyUj.HasValue || _lastRemoteStatsUtc == DateTime.MinValue)
+            {
+                return null;
+            }
+            var elapsed = Math.Max(0.001, (DateTime.UtcNow - _lastRemoteStatsUtc).TotalSeconds);
+            var delta = energyUj.Value - _lastRemoteEnergyUj.Value;
+            if (delta < 0)
+            {
+                return null;
+            }
+            return (delta / 1000000.0) / elapsed;
+        }
+
+        private void CalculateRemoteNetworkRates(DateTime nowUtc, ulong rx, ulong tx, UbuntuSnapshot snapshot)
+        {
+            if (_lastRemoteStatsUtc == DateTime.MinValue)
+            {
+                snapshot.NetworkRxBytesPerSec = 0;
+                snapshot.NetworkTxBytesPerSec = 0;
+                return;
+            }
+
+            var elapsed = Math.Max(0.001, (nowUtc - _lastRemoteStatsUtc).TotalSeconds);
+            snapshot.NetworkRxBytesPerSec = rx >= _lastRemoteNetworkRxTotal ? (rx - _lastRemoteNetworkRxTotal) / elapsed : 0;
+            snapshot.NetworkTxBytesPerSec = tx >= _lastRemoteNetworkTxTotal ? (tx - _lastRemoteNetworkTxTotal) / elapsed : 0;
         }
 
         private static List<ProcessRow> ParseProcessRows(object[] rows)
@@ -2355,7 +2588,6 @@ namespace OpenClawMonitor
 import json
 import os
 import subprocess
-import time
 
 def cpu_snapshot():
     with open('/proc/stat', 'r') as f:
@@ -2380,16 +2612,8 @@ def read_energy_file():
                     pass
     return None, None
 
-idle1, total1 = cpu_snapshot()
-energy_path, energy1 = read_energy_file()
-t1 = time.time()
-time.sleep(0.25)
-idle2, total2 = cpu_snapshot()
-t2 = time.time()
-
-total_delta = max(1, total2 - total1)
-idle_delta = max(0, idle2 - idle1)
-cpu_percent = max(0.0, min(100.0, (1.0 - (float(idle_delta) / float(total_delta))) * 100.0))
+cpu_idle, cpu_total = cpu_snapshot()
+energy_path, energy_uj = read_energy_file()
 
 mem = {}
 with open('/proc/meminfo', 'r') as f:
@@ -2403,18 +2627,6 @@ mem_avail = mem.get('MemAvailable', 0.0)
 mem_used = max(0.0, mem_total - mem_avail)
 memory_percent = (mem_used / mem_total * 100.0) if mem_total else None
 
-power_watts = None
-if energy_path and energy1 is not None:
-    try:
-        with open(energy_path, 'r') as f:
-            energy2 = int(f.read().strip())
-        delta = energy2 - energy1
-        elapsed = max(0.001, t2 - t1)
-        if delta >= 0:
-            power_watts = (float(delta) / 1000000.0) / elapsed
-    except Exception:
-        power_watts = None
-
 def read_processes():
     rows = []
     try:
@@ -2423,7 +2635,7 @@ def read_processes():
             stderr=subprocess.DEVNULL,
             text=True
         )
-        for line in out.splitlines()[1:41]:
+        for line in out.splitlines()[1:31]:
             parts = line.split(None, 5)
             if len(parts) < 6:
                 continue
@@ -2468,23 +2680,17 @@ def net_snapshot():
         pass
     return rx, tx
 
-net_rx1, net_tx1 = net_snapshot()
-time.sleep(0.10)
-net_rx2, net_tx2 = net_snapshot()
-net_elapsed = 0.10
-net_rx_bps = max(0.0, float(net_rx2 - net_rx1) / net_elapsed)
-net_tx_bps = max(0.0, float(net_tx2 - net_tx1) / net_elapsed)
+net_rx, net_tx = net_snapshot()
 
 print(json.dumps({
-    'cpu_percent': cpu_percent,
+    'cpu_idle': cpu_idle,
+    'cpu_total': cpu_total,
     'memory_percent': memory_percent,
     'memory_used_mb': mem_used / 1024.0,
     'memory_total_mb': mem_total / 1024.0,
-    'power_watts': power_watts,
-    'network_rx_bps': net_rx_bps,
-    'network_tx_bps': net_tx_bps,
-    'network_rx_total': net_rx2,
-    'network_tx_total': net_tx2,
+    'energy_uj': energy_uj,
+    'network_rx_total': net_rx,
+    'network_tx_total': net_tx,
     'processes': read_processes()
 }))
 ";
@@ -2493,6 +2699,11 @@ print(json.dumps({
     public sealed class LmStudioService : IDisposable
     {
         private LmsLogTailer _tailer = new LmsLogTailer();
+        private DateTime _nextApiReadUtc = DateTime.MinValue;
+        private string _apiCacheKey = string.Empty;
+        private LmModelsResult _cachedApiResult;
+        private DateTime _nextPsReadUtc = DateTime.MinValue;
+        private bool? _cachedProcessing;
 
         public LmStudioSnapshot Read(MonitorSettings settings)
         {
@@ -2507,7 +2718,7 @@ print(json.dumps({
             snapshot.SessionOutputTokens = tail.SessionOutputTokens;
             snapshot.IsProcessing = null;
 
-            var api = ReadModelsApi(settings);
+            var api = ReadModelsApiCached(settings);
             if (api != null)
             {
                 snapshot.ServerOnline = true;
@@ -2520,7 +2731,7 @@ print(json.dumps({
                 snapshot.Error = "API OFFLINE";
             }
 
-            var ps = ReadLmsPs();
+            var ps = ReadLmsPsCached();
             if (ps.HasValue)
             {
                 snapshot.IsProcessing = ps.Value;
@@ -2542,6 +2753,8 @@ print(json.dumps({
                 _tailer.Dispose();
             }
             _tailer = new LmsLogTailer();
+            _nextApiReadUtc = DateTime.MinValue;
+            _nextPsReadUtc = DateTime.MinValue;
         }
 
         public void Dispose()
@@ -2591,6 +2804,22 @@ print(json.dumps({
                 }
             }
             return null;
+        }
+
+        private LmModelsResult ReadModelsApiCached(MonitorSettings settings)
+        {
+            var baseUrl = (settings.LmStudioBaseUrl ?? "http://localhost:1234").Trim().TrimEnd('/');
+            var key = baseUrl + "|" + (settings.LmStudioApiToken ?? string.Empty);
+            var now = DateTime.UtcNow;
+            if (key == _apiCacheKey && now < _nextApiReadUtc)
+            {
+                return _cachedApiResult;
+            }
+
+            _apiCacheKey = key;
+            _cachedApiResult = ReadModelsApi(settings);
+            _nextApiReadUtc = now.AddMilliseconds(_cachedApiResult == null ? 3000 : 1000);
+            return _cachedApiResult;
         }
 
         private static string RequestJson(string url, string token)
@@ -2721,6 +2950,19 @@ print(json.dumps({
             {
                 return null;
             }
+        }
+
+        private bool? ReadLmsPsCached()
+        {
+            var now = DateTime.UtcNow;
+            if (now < _nextPsReadUtc)
+            {
+                return _cachedProcessing;
+            }
+
+            _cachedProcessing = ReadLmsPs();
+            _nextPsReadUtc = now.AddMilliseconds(_cachedProcessing.HasValue ? 2000 : 5000);
+            return _cachedProcessing;
         }
     }
 
